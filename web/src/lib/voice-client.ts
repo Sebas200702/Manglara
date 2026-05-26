@@ -51,6 +51,8 @@ export class VoiceClient {
   private videoInterval: ReturnType<typeof setInterval> | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private videoEl: HTMLVideoElement | null = null;
+  private micEnabled = true;
+  private cameraEnabled = true;
   private callbacks: VoiceClientCallbacks;
 
   constructor(callbacks: VoiceClientCallbacks = {}) {
@@ -169,6 +171,32 @@ export class VoiceClient {
     this.startVideo(stream);
   }
 
+  setMicEnabled(enabled: boolean): void {
+    this.micEnabled = enabled;
+    const track = this.micStream?.getAudioTracks()[0];
+    if (track) track.enabled = enabled;
+  }
+
+  setCameraEnabled(enabled: boolean): void {
+    this.cameraEnabled = enabled;
+    const track = this.micStream?.getVideoTracks()[0];
+    if (!track) return;
+    track.enabled = enabled;
+    if (enabled) {
+      this.startVideoCapture();
+    } else {
+      this.stopVideoCapture();
+    }
+  }
+
+  isMicEnabled(): boolean {
+    return this.micEnabled;
+  }
+
+  isCameraEnabled(): boolean {
+    return this.cameraEnabled;
+  }
+
   private startVideo(stream: MediaStream): void {
     const videoTrack = stream.getVideoTracks()[0];
     if (!videoTrack) return;
@@ -188,43 +216,56 @@ export class VoiceClient {
 
     this.videoEl.play().then(() => {
       if (!ctx || !this.videoEl || !this.canvas) return;
-
-      this.videoInterval = setInterval(() => {
-        if (this.ws?.readyState !== WebSocket.OPEN) return;
-        if (this.videoEl!.readyState < this.videoEl!.HAVE_CURRENT_DATA) return;
-
-        ctx.drawImage(this.videoEl!, 0, 0, this.canvas!.width, this.canvas!.height);
-        
-        // Callback for preview
-        this.callbacks.onVideoFrame?.(this.canvas!);
-        
-        this.canvas!.toBlob(
-          (blob) => {
-            if (!blob) return;
-            blob.arrayBuffer().then((buf) => {
-              if (this.ws?.readyState !== WebSocket.OPEN) return;
-              const payload: ClientToServerMessage = {
-                type: "video",
-                data: bufferToBase64(buf),
-                mimeType: "image/jpeg",
-              };
-              this.ws.send(JSON.stringify(payload));
-            });
-          },
-          "image/jpeg",
-          0.85
-        );
-      }, VIDEO_FRAME_INTERVAL_MS);
+      this.startVideoCapture();
     }).catch(() => {});
   }
 
-  disconnect(): void {
-    this.playbackQueue?.stop();
+  private startVideoCapture(): void {
+    if (this.videoInterval || !this.cameraEnabled) return;
 
+    const ctx = this.canvas?.getContext("2d");
+    if (!ctx || !this.videoEl || !this.canvas) return;
+
+    this.videoInterval = setInterval(() => {
+      if (this.ws?.readyState !== WebSocket.OPEN) return;
+      if (!this.cameraEnabled) return;
+      if (this.videoEl!.readyState < this.videoEl!.HAVE_CURRENT_DATA) return;
+
+      ctx.drawImage(this.videoEl!, 0, 0, this.canvas!.width, this.canvas!.height);
+
+      this.callbacks.onVideoFrame?.(this.canvas!);
+
+      this.canvas!.toBlob(
+        (blob) => {
+          if (!blob) return;
+          blob.arrayBuffer().then((buf) => {
+            if (this.ws?.readyState !== WebSocket.OPEN) return;
+            const payload: ClientToServerMessage = {
+              type: "video",
+              data: bufferToBase64(buf),
+              mimeType: "image/jpeg",
+            };
+            this.ws.send(JSON.stringify(payload));
+          });
+        },
+        "image/jpeg",
+        0.85
+      );
+    }, VIDEO_FRAME_INTERVAL_MS);
+  }
+
+  private stopVideoCapture(): void {
     if (this.videoInterval) {
       clearInterval(this.videoInterval);
       this.videoInterval = null;
     }
+  }
+
+  disconnect(): void {
+    this.playbackQueue?.stop();
+    this.stopVideoCapture();
+    this.micEnabled = true;
+    this.cameraEnabled = true;
 
     this.videoEl?.pause();
     this.videoEl = null;

@@ -1,0 +1,63 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+@theme {
+  --color-neutral-50: #f9faf9;
+  --color-neutral-100: #f4f5f4;
+  --color-neutral-200: #e6e6e5;
+  --color-neutral-300: #d4d4d3;
+  --color-neutral-400: #a5a5a1;
+  --color-neutral-500: #747470;
+  --color-neutral-600: #535451;
+  --color-neutral-700: #41413f;
+  --color-neutral-800: #272726;
+  --color-neutral-900: #1a1a19;
+  --color-neutral-950: #0b0b0a;
+  --color-brand-50: #fef8ec;
+--color-brand-100: #fcecc9;
+--color-brand-200: #f9d78e;
+--color-brand-300: #f6bc53;
+--color-brand-400: #f4a734;
+--color-brand-500: #ed8113;
+--color-brand-600: #d25e0d;
+--color-brand-700: #ae400f;
+--color-brand-800: #8d3213;
+--color-brand-900: #742a13;
+--color-brand-950: #431305;
+
+  --color-status-success: #5f9e7d;
+  --color-status-error: #d66a6a;
+  --color-status-warning: #d9a75b;
+  --font-inter: "Inter", sans-serif;
+  --font-onest: "Onest", sans-serif;
+
+  --animate-panel-slide-in: panel-slide-in 0.25s ease-out;
+  --animate-speaking-pulse: speaking-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes panel-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes speaking-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-brand-400) 40%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 12px color-mix(in srgb, var(--color-brand-400) 0%, transparent);
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-neutral-50 text-neutral-900 antialiased;
+    font-family: var(--font-onest);
+  }
+}

@@ -1,5 +1,9 @@
-import { CallScreen } from "./components/CallScreen.js";
+import { Outlet } from "react-router-dom";
 
 export function App() {
-  return <CallScreen />;
+  return (
+    <div>
+      <Outlet />
+    </div>
+  );
 }

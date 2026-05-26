@@ -1,0 +1,21 @@
+{
+  "name": "@manglara/shared",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/ws-messages.ts",
+  "types": "./src/ws-messages.ts",
+  "exports": {
+    ".": {
+      "types": "./src/ws-messages.ts",
+      "import": "./src/ws-messages.ts",
+      "default": "./dist/ws-messages.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}

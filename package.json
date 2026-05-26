@@ -1,0 +1,14 @@
+{
+  "name": "manglara",
+  "private": true,
+  "workspaces": [
+    "packages/shared",
+    "web"
+  ],
+  "scripts": {
+    "dev": "cd web && bun run dev"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

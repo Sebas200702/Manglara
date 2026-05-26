@@ -1,0 +1,120 @@
+.avatar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  position: relative;
+}
+
+.avatar__ring {
+  position: absolute;
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  transition: border-color 0.3s, box-shadow 0.3s, transform 0.3s;
+}
+
+.avatar__face {
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #3d5a80 0%, #293241 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.25rem;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  z-index: 1;
+  transition: transform 0.3s ease;
+}
+
+.avatar__eyes {
+  display: flex;
+  gap: 2rem;
+}
+
+.avatar__eyes span {
+  width: 14px;
+  height: 14px;
+  background: #e0fbfc;
+  border-radius: 50%;
+}
+
+.avatar__mouth {
+  width: 40px;
+  height: 8px;
+  background: #e0fbfc;
+  border-radius: 4px;
+  transition: height 0.2s, border-radius 0.2s;
+}
+
+.avatar--listening .avatar__ring {
+  border-color: #4cc9f0;
+  box-shadow: 0 0 24px rgba(76, 201, 240, 0.4);
+  animation: pulse-ring 1.5s ease-in-out infinite;
+}
+
+.avatar--thinking .avatar__ring {
+  border-color: #f4a261;
+  box-shadow: 0 0 20px rgba(244, 162, 97, 0.35);
+}
+
+.avatar--thinking .avatar__face {
+  animation: subtle-bob 1.2s ease-in-out infinite;
+}
+
+.avatar--speaking .avatar__ring {
+  border-color: #2ec4b6;
+  box-shadow: 0 0 28px rgba(46, 196, 182, 0.5);
+}
+
+.avatar--speaking .avatar__mouth {
+  height: 20px;
+  border-radius: 50%;
+  animation: speak-mouth 0.25s ease-in-out infinite alternate;
+}
+
+.avatar--idle .avatar__face {
+  opacity: 0.65;
+}
+
+.avatar__label {
+  margin: 0;
+  font-size: 0.875rem;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+@keyframes pulse-ring {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 0.85;
+  }
+}
+
+@keyframes subtle-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes speak-mouth {
+  from {
+    transform: scaleY(0.6);
+  }
+  to {
+    transform: scaleY(1.2);
+  }
+}

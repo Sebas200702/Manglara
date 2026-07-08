@@ -6,3 +6,5 @@ build/
 *.log
 .DS_Store
 google-credentials.json
+__pycache__/
+.claude/

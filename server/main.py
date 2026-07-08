@@ -8,6 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import PORT
 from gemini_client import GeminiLiveClient
+from pdf.router import router as pdf_router, get_active_documents
+from pdf.retrieval import retrieve_context
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,6 +26,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(pdf_router)
 
 
 @app.get("/health")
@@ -54,8 +58,21 @@ async def ws_voice(ws: WebSocket):
     async def on_turn_complete():
         await ws.send_json({"type": "turn_complete"})
 
+    async def on_user_turn(text: str):
+        doc_ids = get_active_documents()
+        if not doc_ids:
+            return
+        try:
+            context = await retrieve_context(doc_ids, text)
+            if context:
+                await gemini.inject_context(context)
+                logger.info("[rag] injected %d chars of context", len(context))
+        except Exception as e:
+            logger.warning("[rag] retrieval failed: %s", e)
+
     gemini.transcript_callback = on_transcript
     gemini.turn_complete_callback = on_turn_complete
+    gemini.on_user_turn_complete = on_user_turn
 
     async def ws_to_gemini():
         try:

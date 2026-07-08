@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import AsyncIterator, Callable, Any
 
@@ -20,6 +21,9 @@ class GeminiLiveClient:
         self.session = None
         self.transcript_callback: Callable[[str, str], Any] | None = None
         self.turn_complete_callback: Callable[[], Any] | None = None
+        self.on_user_turn_complete: Callable[[str], Any] | None = None
+        self._user_text_buffer = ""
+        self._receiving_output = False
 
     async def connect(self):
         config = types.LiveConnectConfig(
@@ -64,6 +68,11 @@ class GeminiLiveClient:
             video=types.Blob(data=image_data, mime_type="image/jpeg")
         )
 
+    async def inject_context(self, text: str):
+        if not self.session:
+            return
+        await self.session.send_realtime_input(text=text)
+
     async def receive_loop(self) -> AsyncIterator[bytes]:
         while True:
             async for response in self.session.receive():
@@ -72,11 +81,20 @@ class GeminiLiveClient:
                 if sc:
                     if getattr(sc, "input_transcription", None):
                         text = getattr(sc.input_transcription, "text", None)
-                        if text and self.transcript_callback:
-                            await self.transcript_callback("user", text)
+                        if text:
+                            self._user_text_buffer += text
+                            self._receiving_output = False
+                            if self.transcript_callback:
+                                await self.transcript_callback("user", text)
 
                     if getattr(sc, "output_transcription", None):
                         text = getattr(sc.output_transcription, "text", None)
+                        if not self._receiving_output and self._user_text_buffer.strip():
+                            user_text = self._user_text_buffer
+                            self._user_text_buffer = ""
+                            if self.on_user_turn_complete:
+                                asyncio.create_task(self.on_user_turn_complete(user_text))
+                        self._receiving_output = True
                         if text and self.transcript_callback:
                             await self.transcript_callback("model", text)
 

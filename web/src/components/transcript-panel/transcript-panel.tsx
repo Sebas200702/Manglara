@@ -8,30 +8,30 @@ export function TranscriptPanel({ entries }: TranscriptPanelProps) {
         <p className="mt-0.5 text-xs text-neutral-500">Transcripción en vivo</p>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 py-3 font-[family-name:var(--font-inter)]">
+      <div className="flex-1 overflow-y-auto px-3 py-3">
         {entries.length === 0 ? (
-          <p className="px-1 py-8 text-center text-sm text-neutral-500">
-            La transcripción aparecerá aquí cuando empieces a hablar.
+          <p className="px-1 py-8 text-center text-xs text-neutral-500 leading-relaxed font-medium">
+            La transcripción aparecerá aquí cuando empieces a hablar con Manglara.
           </p>
         ) : (
           <div className="flex flex-col gap-3">
             {entries.map((entry) => (
               <div
                 key={entry.id}
-                className={`rounded-xl px-3 py-2.5 ${
+                className={`rounded-2xl px-3.5 py-2.5 border transition-all duration-300 ${
                   entry.role === "user"
-                    ? "ml-4 bg-brand-50 text-neutral-800"
-                    : "mr-4 bg-neutral-100 text-neutral-800"
+                    ? "ml-6 bg-accent-50/60 border-accent-100 text-navy-900 shadow-2xs"
+                    : "mr-6 bg-brand-50/60 border-brand-100 text-navy-900 shadow-2xs"
                 }`}
               >
                 <span
-                  className={`mb-1 block text-[11px] font-medium uppercase tracking-wide ${
-                    entry.role === "user" ? "text-brand-600" : "text-neutral-500"
+                  className={`mb-1 block text-[9px] font-extrabold uppercase tracking-widest ${
+                    entry.role === "user" ? "text-accent-600" : "text-brand-600"
                   }`}
                 >
                   {entry.role === "user" ? "Tú" : "Manglara"}
                 </span>
-                <p className="text-sm leading-relaxed">{entry.text}</p>
+                <p className="text-xs leading-relaxed font-medium">{entry.text}</p>
               </div>
             ))}
           </div>

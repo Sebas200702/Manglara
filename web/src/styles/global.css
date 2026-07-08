@@ -1,34 +1,71 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
-@theme {
-  --color-neutral-50: #f9faf9;
-  --color-neutral-100: #f4f5f4;
-  --color-neutral-200: #e6e6e5;
-  --color-neutral-300: #d4d4d3;
-  --color-neutral-400: #a5a5a1;
-  --color-neutral-500: #747470;
-  --color-neutral-600: #535451;
-  --color-neutral-700: #41413f;
-  --color-neutral-800: #272726;
-  --color-neutral-900: #1a1a19;
-  --color-neutral-950: #0b0b0a;
-  --color-brand-50: #fef8ec;
---color-brand-100: #fcecc9;
---color-brand-200: #f9d78e;
---color-brand-300: #f6bc53;
---color-brand-400: #f4a734;
---color-brand-500: #ed8113;
---color-brand-600: #d25e0d;
---color-brand-700: #ae400f;
---color-brand-800: #8d3213;
---color-brand-900: #742a13;
---color-brand-950: #431305;
 
-  --color-status-success: #5f9e7d;
+/*
+ * Habilidades Verdes Ya — línea gráfica
+ * Palette from the brand assets sheet:
+ *   #CCD63C lima · #9EBF1B verde · #DDE8B7 verde pálido
+ *   #1D436F azul · #FFAB4D naranja · #FFFFFF blanco
+ * Typography: Montserrat family.
+ */
+@theme {
+  /* Neutrals: warm-tinted greys that sit calmly next to the greens */
+  --color-neutral-50: #f8faf6;
+  --color-neutral-100: #f1f4ec;
+  --color-neutral-200: #e5e9dd;
+  --color-neutral-300: #d1d6c6;
+  --color-neutral-400: #a3a99a;
+  --color-neutral-500: #737a6b;
+  --color-neutral-600: #545a4d;
+  --color-neutral-700: #40453a;
+  --color-neutral-800: #272b22;
+  --color-neutral-900: #1a1d16;
+  --color-neutral-950: #0b0d08;
+
+  /* Brand green — anchored on #DDE8B7 (200), #CCD63C (300), #9EBF1B (500) */
+  --color-brand-50: #f7f9ec;
+  --color-brand-100: #edf3d3;
+  --color-brand-200: #dde8b7;
+  --color-brand-300: #ccd63c;
+  --color-brand-400: #b6cd28;
+  --color-brand-500: #9ebf1b;
+  --color-brand-600: #86a417;
+  --color-brand-700: #667d16;
+  --color-brand-800: #4f6018;
+  --color-brand-900: #425017;
+  --color-brand-950: #232c08;
+
+  /* Navy — the ink of the brand, anchored on #1D436F (600) */
+  --color-navy-50: #eef3f8;
+  --color-navy-100: #d8e3f0;
+  --color-navy-200: #b3c7df;
+  --color-navy-300: #84a3c8;
+  --color-navy-400: #517aa6;
+  --color-navy-500: #2c5788;
+  --color-navy-600: #1d436f;
+  --color-navy-700: #193a5f;
+  --color-navy-800: #16304d;
+  --color-navy-900: #14293f;
+  --color-navy-950: #0c1826;
+
+  /* Accent orange — anchored on #FFAB4D (400) */
+  --color-accent-50: #fff5e9;
+  --color-accent-100: #ffe6c6;
+  --color-accent-200: #ffd299;
+  --color-accent-300: #ffbc6b;
+  --color-accent-400: #ffab4d;
+  --color-accent-500: #f78f28;
+  --color-accent-600: #e0740f;
+  --color-accent-700: #b95710;
+  --color-accent-800: #933f13;
+  --color-accent-900: #783514;
+
+  --color-status-success: #86a417;
   --color-status-error: #d66a6a;
-  --color-status-warning: #d9a75b;
-  --font-inter: "Inter", sans-serif;
-  --font-onest: "Onest", sans-serif;
+  --color-status-warning: #ffab4d;
+
+  --font-montserrat: "Montserrat", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Montserrat", ui-sans-serif, system-ui, sans-serif;
 
   --animate-panel-slide-in: panel-slide-in 0.25s ease-out;
   --animate-speaking-pulse: speaking-pulse 1.5s ease-in-out infinite;
@@ -48,16 +85,16 @@
 @keyframes speaking-pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-brand-400) 40%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-brand-500) 45%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 12px color-mix(in srgb, var(--color-brand-400) 0%, transparent);
+    box-shadow: 0 0 0 12px color-mix(in srgb, var(--color-brand-500) 0%, transparent);
   }
 }
 
 @layer base {
   body {
-    @apply bg-neutral-50 text-neutral-900 antialiased;
-    font-family: var(--font-onest);
+    @apply bg-neutral-50 text-navy-900 antialiased;
+    font-family: var(--font-montserrat);
   }
 }

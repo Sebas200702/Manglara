@@ -23,6 +23,15 @@ function workletBlobUrl(): string {
   return URL.createObjectURL(new Blob([code], { type: "application/javascript" }));
 }
 
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
 function bufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   let binary = "";
@@ -54,9 +63,20 @@ export class VoiceClient {
   private micEnabled = true;
   private cameraEnabled = true;
   private callbacks: VoiceClientCallbacks;
+  private audioChunkSink: ((pcm: ArrayBuffer) => void) | null = null;
 
   constructor(callbacks: VoiceClientCallbacks = {}) {
     this.callbacks = callbacks;
+  }
+
+  /**
+   * Redirects assistant PCM (24 kHz, 16-bit LE) to an external consumer
+   * (the TalkingHead avatar) instead of the built-in playback queue. Pass
+   * null to fall back to local playback. Speaking state is then owned by the
+   * consumer rather than the playback queue.
+   */
+  setAudioChunkSink(sink: ((pcm: ArrayBuffer) => void) | null): void {
+    this.audioChunkSink = sink;
   }
 
   get isConnected(): boolean {
@@ -106,9 +126,13 @@ export class VoiceClient {
   private handleMessage(msg: ServerToClientMessage): void {
     switch (msg.type) {
       case "audio":
-        this.playbackQueue?.enqueue(msg.data, (speaking) =>
-          this.callbacks.onSpeakingChange?.(speaking)
-        );
+        if (this.audioChunkSink) {
+          this.audioChunkSink(base64ToArrayBuffer(msg.data));
+        } else {
+          this.playbackQueue?.enqueue(msg.data, (speaking) =>
+            this.callbacks.onSpeakingChange?.(speaking)
+          );
+        }
         break;
       case "transcript":
         this.callbacks.onTranscript?.(msg.role, msg.text);

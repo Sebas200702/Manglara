@@ -25,3 +25,7 @@ GEMINI_LIVE_MODEL = os.getenv(
 )
 GEMINI_VOICE_NAME = os.getenv("GEMINI_VOICE_NAME", "Zephyr")
 PORT = int(os.getenv("PORT", "3000"))
+
+SUPABASE_URL = _require("SUPABASE_URL")
+SUPABASE_SERVICE_KEY = _require("SUPABASE_SERVICE_KEY")
+SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "documents")

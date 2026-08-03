@@ -8,3 +8,10 @@ build/
 google-credentials.json
 __pycache__/
 .claude/
+
+# Local-only avatar pipeline test assets (third-party IP — not for commit/deploy)
+web/public/ragatha_test*.glb
+web/public/vrm_test.glb
+scripts/avatar-rig-transfer/output/
+scripts/avatar-rig-transfer/refs/*.glb
+web/public/custom_avatar.glb

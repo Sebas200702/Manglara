@@ -69,6 +69,30 @@
 
   --animate-panel-slide-in: panel-slide-in 0.25s ease-out;
   --animate-speaking-pulse: speaking-pulse 1.5s ease-in-out infinite;
+  --animate-mangrove-sway: mangrove-sway 8s ease-in-out infinite;
+  --animate-water-shimmer: water-shimmer 7s ease-in-out infinite;
+}
+
+@keyframes mangrove-sway {
+  0%,
+  100% {
+    transform: rotate(-1.4deg);
+  }
+  50% {
+    transform: rotate(1.4deg);
+  }
+}
+
+@keyframes water-shimmer {
+  0%,
+  100% {
+    opacity: 0.15;
+    transform: translateX(-8px);
+  }
+  50% {
+    opacity: 0.6;
+    transform: translateX(8px);
+  }
 }
 
 @keyframes panel-slide-in {

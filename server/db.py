@@ -99,6 +99,32 @@ async def list_documents() -> list[dict]:
         return resp.json()
 
 
+async def get_document_chunks(document_id: str) -> list[dict]:
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{BASE}/chunks",
+            params={
+                "document_id": f"eq.{document_id}",
+                "select": "content,page_num,chunk_index",
+                "order": "chunk_index.asc",
+            },
+            headers=HEADERS,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def update_document_digest(document_id: str, digest: str):
+    async with httpx.AsyncClient() as client:
+        resp = await client.patch(
+            f"{BASE}/documents",
+            params={"id": f"eq.{document_id}"},
+            json={"digest": digest},
+            headers=HEADERS,
+        )
+        resp.raise_for_status()
+
+
 async def delete_document(document_id: str) -> bool:
     async with httpx.AsyncClient() as client:
         resp = await client.delete(

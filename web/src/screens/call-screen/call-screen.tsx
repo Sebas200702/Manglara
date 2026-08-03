@@ -8,12 +8,12 @@ import {
   VideoOff,
   Info,
 } from "lucide-react";
-import { useState } from "react";
 import { Avatar } from "../../components/avatar";
 import { TranscriptPanel } from "../../components/transcript-panel";
 import { useCallScreen } from "./use-call-screen";
 import { Logo } from "../../components/brand/logo";
 import { PartnerLogos } from "../../components/brand/partner-logos";
+import { MangroveVideo } from "../../components/brand/mangrove-video";
 
 const connectionLabels: Record<string, string> = {
   connected: "En llamada",
@@ -90,31 +90,8 @@ export function CallScreen() {
         <main className={`relative flex flex-col p-4 flex-1 ${chatOpen ? "col-span-1" : "col-span-2"}`}>
           <div className="relative flex-1 overflow-hidden rounded-3xl bg-linear-to-b from-[#f7f9ec] via-[#dde8b7]/40 to-[#ccd63c]/15 border border-brand-200/60 shadow-inner">
 
-            {/* Organic Landscape Background */}
-            <svg viewBox="0 0 1000 300" preserveAspectRatio="none" className="absolute bottom-0 left-0 w-full h-40 sm:h-56 pointer-events-none opacity-35 select-none z-0" aria-hidden>
-              {/* Background Hills */}
-              <path d="M0,220 C200,160 400,280 600,200 C800,120 900,240 1000,180 L1000,300 L0,300 Z" fill="#dde8b7" />
-              {/* Foreground Hills */}
-              <path d="M0,260 C150,220 300,280 500,230 C700,180 850,250 1000,220 L1000,300 L0,300 Z" fill="#9ebf1b" opacity="0.5" />
-              {/* Wind Turbine 1 (Left) */}
-              <g transform="translate(160, 80)" stroke="#9ebf1b" strokeWidth="2" fill="none" opacity="0.65">
-                <line x1="0" y1="0" x2="0" y2="120" strokeWidth="3" />
-                <g className="animate-spin [animation-duration:18s]" style={{ transformOrigin: '0px 0px' }}>
-                  <line x1="0" y1="0" x2="0" y2="-40" />
-                  <line x1="0" y1="0" x2="35" y2="20" />
-                  <line x1="0" y1="0" x2="-35" y2="20" />
-                </g>
-              </g>
-              {/* Wind Turbine 2 (Right) */}
-              <g transform="translate(820, 110)" stroke="#ccd63c" strokeWidth="1.5" fill="none" opacity="0.55">
-                <line x1="0" y1="0" x2="0" y2="90" strokeWidth="2.5" />
-                <g className="animate-spin [animation-duration:12s]" style={{ transformOrigin: '0px 0px' }}>
-                  <line x1="0" y1="0" x2="0" y2="-30" />
-                  <line x1="0" y1="0" x2="26" y2="15" />
-                  <line x1="0" y1="0" x2="-26" y2="15" />
-                </g>
-              </g>
-            </svg>
+            {/* Mangrove environment backdrop (looping video + ambient sound) */}
+            <MangroveVideo ambient={inCall} ducked={avatarState === "speaking"} />
 
             {/* Avatar 3D Component */}
             <div className="size-full z-10 relative">

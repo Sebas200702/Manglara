@@ -11,11 +11,12 @@ export interface VoiceClientCallbacks {
   onConnectionChange?: (state: ConnectionState) => void;
   onTranscript?: (role: TranscriptRole, text: string) => void;
   onTurnComplete?: () => void;
+  /** Barge-in: everything streamed ahead of playback is stale, drop it. */
+  onInterrupted?: () => void;
   onSpeakingChange?: (speaking: boolean) => void;
   onSessionReady?: () => void;
   onError?: (message: string) => void;
   onVideoStream?: (stream: MediaStream | null) => void;
-  onVideoFrame?: (canvas: HTMLCanvasElement) => void;
 }
 
 function workletBlobUrl(): string {
@@ -32,6 +33,10 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
+/**
+ * Base64 for the small mic chunks (1920 bytes each). Fine synchronously at that
+ * size; video frames are tens of kilobytes and use `blobToBase64` instead.
+ */
 function bufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   let binary = "";
@@ -43,12 +48,61 @@ function bufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
+/**
+ * Base64 of a Blob, encoded OFF the main thread.
+ *
+ * The previous path read the blob into an ArrayBuffer and ran the synchronous
+ * `String.fromCharCode(...)` + `btoa` loop above over a whole JPEG. That is one of
+ * the main-thread stalls that made the avatar's animation hitch - and a hitch
+ * freezes the mouth mid-word, which reads as lip-sync drift however good the
+ * playback clock is. FileReader does the same work without blocking the render loop.
+ */
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const url = typeof reader.result === "string" ? reader.result : "";
+      const comma = url.indexOf(",");
+      resolve(comma >= 0 ? url.slice(comma + 1) : "");
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("FileReader failed"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * Worker that JPEG-encodes and base64s a captured frame, entirely off the main
+ * thread.
+ *
+ * Measured on the dev machine, per frame: `canvas.toDataURL` blocked the main thread
+ * for 21.8 ms median / 70.0 ms max and the synchronous base64 loop for another
+ * 13.4 ms - and even `canvas.toBlob`, despite the async callback, blocked for 9.6 ms
+ * median / 63.5 ms max because the canvas readback is synchronous. TalkingHead's
+ * animation loop reports a delta clamped at 66.7 ms, so a stall like that both drops
+ * frames (the mouth freezes mid-word) and used to lose that time from the lip-sync
+ * clock permanently.
+ *
+ * Handing an ImageBitmap to a worker instead costs 0.5 ms to create and 0.6 ms to
+ * transfer - the transfer is zero-copy - and the ~75 ms encode happens where it
+ * cannot touch the render loop.
+ */
+function frameWorkerBlobUrl(): string {
+  const code = `self.onmessage=async(e)=>{const b=e.data;try{const c=new OffscreenCanvas(b.width,b.height);c.getContext("2d").drawImage(b,0,0);b.close();const bl=await c.convertToBlob({type:"image/jpeg",quality:0.85});const u=new Uint8Array(await bl.arrayBuffer());let s="";const k=0x8000;for(let i=0;i<u.length;i+=k)s+=String.fromCharCode.apply(null,u.subarray(i,i+k));self.postMessage(btoa(s));}catch(err){try{b.close();}catch(_){}self.postMessage(null);}};`;
+  return URL.createObjectURL(new Blob([code], { type: "application/javascript" }));
+}
+
 function wsUrl(path = "/ws/voice"): string {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//localhost:3000${path}`;
 }
 
 const VIDEO_FRAME_INTERVAL_MS = 1500;
+/**
+ * Capture size sent to the model. Kept at the previous canvas dimensions, including
+ * the 16:9 -> 4:3 squash the old `drawImage` did, so what Gemini sees is unchanged.
+ */
+const VIDEO_FRAME_WIDTH = 640;
+const VIDEO_FRAME_HEIGHT = 480;
 
 export class VoiceClient {
   private ws: WebSocket | null = null;
@@ -60,6 +114,10 @@ export class VoiceClient {
   private videoInterval: ReturnType<typeof setInterval> | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private videoEl: HTMLVideoElement | null = null;
+  private frameWorker: Worker | null = null;
+  private frameWorkerUrl: string | null = null;
+  /** A frame is in the worker; don't queue another behind it. */
+  private framePending = false;
   private micEnabled = true;
   private cameraEnabled = true;
   private callbacks: VoiceClientCallbacks;
@@ -104,6 +162,10 @@ export class VoiceClient {
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data as string) as ServerToClientMessage;
+          // Deliberately NOT logged per message: audio arrives continuously and a
+          // console.log per chunk is itself a main-thread stall (worse with DevTools
+          // open), which hitches the avatar's render loop. Use `__lipsyncLog()` for
+          // timing questions - it samples at 4 Hz instead.
           this.handleMessage(msg);
         } catch {
           this.callbacks.onError?.("Invalid server message");
@@ -126,6 +188,12 @@ export class VoiceClient {
   private handleMessage(msg: ServerToClientMessage): void {
     switch (msg.type) {
       case "audio":
+        if (this.micCtx && this.micCtx.state === "suspended") {
+          void this.micCtx.resume();
+        }
+        if (this.playbackCtx && this.playbackCtx.state === "suspended") {
+          void this.playbackCtx.resume();
+        }
         if (this.audioChunkSink) {
           this.audioChunkSink(base64ToArrayBuffer(msg.data));
         } else {
@@ -139,6 +207,11 @@ export class VoiceClient {
         break;
       case "turn_complete":
         this.callbacks.onTurnComplete?.();
+        break;
+      case "interrupted":
+        // Drop the audio we were sent ahead of playback - Gemini abandoned it.
+        this.playbackQueue?.stop();
+        this.callbacks.onInterrupted?.();
         break;
       case "session_ready":
         this.callbacks.onSessionReady?.();
@@ -162,6 +235,7 @@ export class VoiceClient {
     await this.micCtx.resume();
 
     await this.micCtx.audioWorklet.addModule(workletBlobUrl());
+    console.log("[voice] AudioWorklet loaded, context rate:", this.micCtx.sampleRate);
 
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -174,6 +248,7 @@ export class VoiceClient {
         facingMode: "user",
       },
     });
+    console.log("[voice] getUserMedia OK, audio track:", !!stream.getAudioTracks()[0]);
 
     this.micStream = stream;
 
@@ -184,15 +259,20 @@ export class VoiceClient {
     source.connect(worklet);
 
     worklet.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
-      if (this.ws?.readyState !== WebSocket.OPEN) return;
+      if (this.ws?.readyState !== WebSocket.OPEN) {
+        console.warn("[voice] ws not open, dropping audio chunk");
+        return;
+      }
       const payload: ClientToServerMessage = {
         type: "audio",
         data: bufferToBase64(event.data),
       };
+      // No per-chunk log here either: this fires every 30 ms for the whole call.
       this.ws.send(JSON.stringify(payload));
     };
 
     this.startVideo(stream);
+    console.log("[voice] mic started, sending audio chunks to server");
   }
 
   setMicEnabled(enabled: boolean): void {
@@ -228,18 +308,17 @@ export class VoiceClient {
     this.videoStream = new MediaStream([videoTrack]);
     this.callbacks.onVideoStream?.(this.videoStream);
 
+    // Only the OffscreenCanvas-less fallback path draws into this.
     this.canvas = document.createElement("canvas");
-    this.canvas.width = 640;
-    this.canvas.height = 480;
+    this.canvas.width = VIDEO_FRAME_WIDTH;
+    this.canvas.height = VIDEO_FRAME_HEIGHT;
     this.videoEl = document.createElement("video");
     this.videoEl.srcObject = this.videoStream;
     this.videoEl.muted = true;
     this.videoEl.playsInline = true;
 
-    const ctx = this.canvas.getContext("2d");
-
     this.videoEl.play().then(() => {
-      if (!ctx || !this.videoEl || !this.canvas) return;
+      if (!this.videoEl) return;
       this.startVideoCapture();
     }).catch(() => {});
   }
@@ -247,35 +326,106 @@ export class VoiceClient {
   private startVideoCapture(): void {
     if (this.videoInterval || !this.cameraEnabled) return;
 
-    const ctx = this.canvas?.getContext("2d");
-    if (!ctx || !this.videoEl || !this.canvas) return;
+    const video = this.videoEl;
+    if (!video) return;
+
+    this.ensureFrameWorker();
 
     this.videoInterval = setInterval(() => {
       if (this.ws?.readyState !== WebSocket.OPEN) return;
       if (!this.cameraEnabled) return;
-      if (this.videoEl!.readyState < this.videoEl!.HAVE_CURRENT_DATA) return;
+      if (video.readyState < video.HAVE_CURRENT_DATA) return;
 
-      ctx.drawImage(this.videoEl!, 0, 0, this.canvas!.width, this.canvas!.height);
+      if (this.frameWorker) this.captureViaWorker(video);
+      else this.captureOnMainThread(video);
+    }, VIDEO_FRAME_INTERVAL_MS);
+  }
 
-      this.callbacks.onVideoFrame?.(this.canvas!);
+  /** Spin up the encoder worker, unless the browser can't run one. */
+  private ensureFrameWorker(): void {
+    if (this.frameWorker) return;
+    if (typeof OffscreenCanvas === "undefined" || typeof createImageBitmap !== "function") {
+      console.warn("[voice] sin OffscreenCanvas: los frames se codifican en el hilo principal");
+      return;
+    }
+    try {
+      const url = frameWorkerBlobUrl();
+      const worker = new Worker(url);
+      worker.onmessage = (event: MessageEvent<string | null>) => {
+        this.framePending = false;
+        const data = event.data;
+        if (!data) return;
+        if (this.ws?.readyState !== WebSocket.OPEN || !this.cameraEnabled) return;
+        const payload: ClientToServerMessage = {
+          type: "video",
+          data,
+          mimeType: "image/jpeg",
+        };
+        this.ws.send(JSON.stringify(payload));
+      };
+      worker.onerror = () => {
+        this.framePending = false;
+      };
+      this.frameWorker = worker;
+      this.frameWorkerUrl = url;
+    } catch {
+      // fall back to the main-thread path
+    }
+  }
 
-      this.canvas!.toBlob(
-        (blob) => {
-          if (!blob) return;
-          blob.arrayBuffer().then((buf) => {
+  /**
+   * Grab a frame as an ImageBitmap and hand it to the worker. `resizeWidth/Height`
+   * means even the downscale happens off the main thread, so no canvas is touched
+   * here at all.
+   */
+  private captureViaWorker(video: HTMLVideoElement): void {
+    const worker = this.frameWorker;
+    if (!worker || this.framePending) return;
+    this.framePending = true;
+    createImageBitmap(video, {
+      resizeWidth: VIDEO_FRAME_WIDTH,
+      resizeHeight: VIDEO_FRAME_HEIGHT,
+      resizeQuality: "medium",
+    })
+      .then((bitmap) => {
+        if (!this.frameWorker) {
+          bitmap.close();
+          this.framePending = false;
+          return;
+        }
+        this.frameWorker.postMessage(bitmap, [bitmap]);
+      })
+      .catch(() => {
+        this.framePending = false;
+      });
+  }
+
+  /** Fallback for browsers without OffscreenCanvas. Blocks the main thread. */
+  private captureOnMainThread(video: HTMLVideoElement): void {
+    const canvas = this.canvas;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return;
+        blobToBase64(blob)
+          .then((data) => {
             if (this.ws?.readyState !== WebSocket.OPEN) return;
             const payload: ClientToServerMessage = {
               type: "video",
-              data: bufferToBase64(buf),
+              data,
               mimeType: "image/jpeg",
             };
             this.ws.send(JSON.stringify(payload));
+          })
+          .catch(() => {
+            // a dropped frame is not worth surfacing; the next one is 1.5 s away
           });
-        },
-        "image/jpeg",
-        0.85
-      );
-    }, VIDEO_FRAME_INTERVAL_MS);
+      },
+      "image/jpeg",
+      0.85
+    );
   }
 
   private stopVideoCapture(): void {
@@ -288,6 +438,13 @@ export class VoiceClient {
   disconnect(): void {
     this.playbackQueue?.stop();
     this.stopVideoCapture();
+    this.frameWorker?.terminate();
+    this.frameWorker = null;
+    if (this.frameWorkerUrl) {
+      URL.revokeObjectURL(this.frameWorkerUrl);
+      this.frameWorkerUrl = null;
+    }
+    this.framePending = false;
     this.micEnabled = true;
     this.cameraEnabled = true;
 

@@ -23,6 +23,7 @@ GEMINI_API_KEY = _require("GEMINI_API_KEY")
 GEMINI_LIVE_MODEL = os.getenv(
     "GEMINI_LIVE_MODEL", "models/gemini-3.1-flash-live-preview"
 )
+GEMINI_DIGEST_MODEL = os.getenv("GEMINI_DIGEST_MODEL", "models/gemini-3.5-flash")
 GEMINI_VOICE_NAME = os.getenv("GEMINI_VOICE_NAME", "Zephyr")
 PORT = int(os.getenv("PORT", "3000"))
 

@@ -8,6 +8,9 @@ export type ServerToClientMessage =
   | { type: "audio"; data: string }
   | { type: "transcript"; role: TranscriptRole; text: string }
   | { type: "turn_complete" }
+  /** Barge-in: the user spoke over the model, so Gemini abandoned the rest of
+   *  the turn. Any audio already sent ahead of playback is stale. */
+  | { type: "interrupted" }
   | { type: "session_ready" }
   | { type: "error"; message: string };
 

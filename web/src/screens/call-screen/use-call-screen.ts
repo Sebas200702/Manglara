@@ -43,7 +43,6 @@ export function useCallScreen() {
   const setMicEnabled = useCallScreenStore((s) => s.setMicEnabled);
   const setCameraEnabled = useCallScreenStore((s) => s.setCameraEnabled);
   const appendTranscript = useCallScreenStore((s) => s.appendTranscript);
-  const prependFrame = useCallScreenStore((s) => s.prependFrame);
   const clearTranscripts = useCallScreenStore((s) => s.clearTranscripts);
   const resetCallState = useCallScreenStore((s) => s.resetCallState);
 
@@ -87,11 +86,21 @@ export function useCallScreen() {
       onConnectionChange: setConnection,
       onTranscript: (role, text) => {
         if (role === "user") setThinking(true);
+        // The assistant's own transcript drives the mouth shapes: Gemini gives
+        // no phoneme timings, but Spanish text maps to visemes reliably.
+        else controllerRef.current?.feedTranscript(text);
         appendTranscript(role, text);
       },
       onTurnComplete: () => {
-        setThinking(true);
+        setThinking(false);
+        setSpeaking(false);
         controllerRef.current?.notifyEnd();
+      },
+      onInterrupted: () => {
+        // Barge-in: drop the stale audio and mouth shapes for the abandoned turn.
+        controllerRef.current?.interrupt();
+        setSpeaking(false);
+        setThinking(false);
       },
       onSpeakingChange: (isSpeaking) => {
         setSpeaking(isSpeaking);
@@ -105,9 +114,6 @@ export function useCallScreen() {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
         }
-      },
-      onVideoFrame: (canvas) => {
-        prependFrame(canvas.toDataURL("image/jpeg"));
       },
     });
 

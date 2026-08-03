@@ -19,7 +19,6 @@ interface CallScreenState {
   chatOpen: boolean;
   micEnabled: boolean;
   cameraEnabled: boolean;
-  frames: string[];
   setConnection: (connection: ConnectionState) => void;
   setSpeaking: (speaking: boolean) => void;
   setThinking: (thinking: boolean) => void;
@@ -30,7 +29,6 @@ interface CallScreenState {
   setMicEnabled: (enabled: boolean) => void;
   setCameraEnabled: (enabled: boolean) => void;
   appendTranscript: (role: "user" | "model", text: string) => void;
-  prependFrame: (frame: string) => void;
   clearTranscripts: () => void;
   resetCallState: () => void;
 }
@@ -46,7 +44,6 @@ export const useCallScreenStore = create<CallScreenState>((set) => ({
   chatOpen: false,
   micEnabled: true,
   cameraEnabled: true,
-  frames: [],
 
   setConnection: (connection) => set({ connection }),
   setSpeaking: (speaking) => set({ speaking }),
@@ -78,11 +75,6 @@ export const useCallScreenStore = create<CallScreenState>((set) => ({
       };
     }),
 
-  prependFrame: (frame) =>
-    set((state) => ({
-      frames: [frame, ...state.frames].slice(0, 12),
-    })),
-
   clearTranscripts: () => set({ transcripts: [] }),
 
   resetCallState: () =>
@@ -94,6 +86,5 @@ export const useCallScreenStore = create<CallScreenState>((set) => ({
       chatOpen: false,
       micEnabled: true,
       cameraEnabled: true,
-      frames: [],
     }),
 }));

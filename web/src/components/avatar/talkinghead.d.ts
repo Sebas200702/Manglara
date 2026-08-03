@@ -35,11 +35,39 @@ declare module "@met4citizen/talkinghead" {
     lipsyncLang?: string;
     waitForAudioChunks?: boolean;
     mood?: string;
+    /** Playback-worklet queue reporting. Off by default in the library. */
+    metrics?: { enabled: boolean; intervalHz?: number };
     [key: string]: unknown;
+  }
+
+  /**
+   * Report from the playback worklet (see modules/playback-worklet.js).
+   * `queuedSamples` counts PCM samples handed over but NOT yet rendered, which
+   * makes it the only exact measure of the true playback position.
+   */
+  export interface PlaybackMetrics {
+    /** 0 = idle, 1 = playing. */
+    state: number;
+    queuedSamples: number;
+    /** Same figure in ms, computed against the AudioContext's sample rate. */
+    queuedMs: number;
+    maxQueuedMs: number;
+    underrunBlocks: number;
+    framesProcessed: number;
+  }
+
+  export interface PlaybackMetricsMessage {
+    type: string;
+    data: PlaybackMetrics;
   }
 
   export interface StreamAudioChunk {
     audio?: ArrayBuffer | Int16Array | Uint8Array | Float32Array;
+    /** Oculus viseme IDs (no `viseme_` prefix) to schedule against the audio. */
+    visemes?: string[];
+    /** Start of each viseme, ms from the start of the streamed utterance. */
+    vtimes?: number[];
+    vdurations?: number[];
     [key: string]: unknown;
   }
 
@@ -57,6 +85,8 @@ declare module "@met4citizen/talkinghead" {
     audioSpeechGainNode: GainNode;
     mtAvatar: Record<string, MorphTargetEntry | undefined>;
     opt: TalkingHeadOptions;
+    /** True while the stream worklet is actually playing audio out. */
+    isSpeaking: boolean;
 
     showAvatar(
       avatar: ShowAvatarOptions,
@@ -78,7 +108,7 @@ declare module "@met4citizen/talkinghead" {
       onAudioStart?: (() => void) | null,
       onAudioEnd?: (() => void) | null,
       onSubtitles?: ((s: string) => void) | null,
-      onMetrics?: ((m: unknown) => void) | null
+      onMetrics?: ((m: PlaybackMetricsMessage) => void) | null
     ): Promise<void>;
     streamAudio(r: StreamAudioChunk): void;
     streamNotifyEnd(): void;

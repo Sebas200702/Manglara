@@ -8,7 +8,8 @@ import fitz
 from docx import Document as DocxDocument
 from fastembed import TextEmbedding
 
-from db import insert_document, insert_chunks
+from db import insert_document, insert_chunks, update_document_digest
+from pdf.digest import generate_digest
 from storage import StorageClient
 
 logger = logging.getLogger(__name__)
@@ -171,6 +172,13 @@ async def ingest_document(
             for c in chunks
         ]
         await insert_chunks(db_chunks)
+
+        # Digest failure is non-critical: retrieval still covers the document.
+        full_text = "\n\n".join(p["text"] for p in pages)
+        digest = await generate_digest(genai_client, filename, full_text)
+        if digest:
+            await update_document_digest(doc_id, digest)
+            logger.info("[ingest] digest stored for '%s' (%d chars)", filename, len(digest))
 
         return {
             "status": "ready",

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastembed import TextEmbedding
@@ -41,7 +42,9 @@ def assemble_context(chunks: list[dict], max_chars: int = 4000) -> str:
 async def retrieve_context(
     document_ids: str | list[str], query: str, top_k: int = 5
 ) -> str:
-    embedding = embed_query(query)
+    # Embedding is CPU-bound (ONNX); run off the event loop so it never
+    # stalls the realtime audio stream while the user is speaking.
+    embedding = await asyncio.to_thread(embed_query, query)
     if isinstance(document_ids, str):
         chunks = await search_chunks(document_ids, embedding, top_k=top_k)
     else:

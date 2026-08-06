@@ -54,6 +54,18 @@ const PACE_RATE_KEY = "manglara.lipsync.paceRate";
  */
 const AVATAR_URL = "/custom_avatar.glb";
 
+/**
+ * Facial mood expressiveness (rig-safe: moods drive only face + head-sway, never
+ * the smeared body/arm skin weights, so they never balloon the dress). Manglara's
+ * resting and speaking face is warm and smiling with animated brows and head-sway
+ * ("happy" carries a dedicated speaking animation), dropping to a calmer "neutral"
+ * face while she glances away thinking. "love" is deliberately NOT used: its
+ * baseline half-lids the eyes (eyeBlink 0.6), which reads as dreamy, not
+ * professional. See animMoods in @met4citizen/talkinghead.
+ */
+const DEFAULT_MOOD = "happy";
+const THINKING_MOOD = "neutral";
+
 /** Vendored HeadAudio (audio-driven viseme detection). Served from public/. */
 const HEADAUDIO_BASE = "/headaudio";
 
@@ -214,7 +226,11 @@ export class AvatarController {
       cameraRotateEnable: false,
       cameraPanEnable: false,
       cameraZoomEnable: false,
-      avatarMood: "neutral",
+      // Warm, lively resting face from the first frame. "happy" carries a smile
+      // baseline plus animated brows/head-sway/micro-mouth (see animMoods in
+      // talkinghead.mjs) - all facial, so it costs nothing on the body rig and is
+      // the expressiveness the arm gestures can't safely provide on this mesh.
+      avatarMood: DEFAULT_MOOD,
       modelFPS: 30,
     });
     this.head = head;
@@ -224,7 +240,7 @@ export class AvatarController {
         url: AVATAR_URL,
         body: "F",
         lipsyncLang: "en",
-        avatarMood: "neutral",
+        avatarMood: DEFAULT_MOOD,
       });
       if (this.disposed) return; // disposed mid-load → dispose() handles teardown
       // Framing tuned for the Manglara character (big afro): "head" view
@@ -253,6 +269,10 @@ export class AvatarController {
       dbg.__say = (text: string) => this.say(text);
       dbg.__phonemes = (text: string) => this.phonemesOf(text);
       dbg.__visemes = AvatarController.VISEMES;
+      dbg.__mood = (mood: string) => {
+        this.setMood(mood);
+        console.log("[mood]", mood);
+      };
       dbg.__hold = (viseme: string | null) => {
         this.hold(viseme);
         console.log("[lipsync] holding", viseme ?? "(released)");
@@ -809,15 +829,36 @@ export class AvatarController {
     this.textVisemesActive = false;
   }
 
-  /** Map the call state machine to gaze/mood behaviors. */
+  /** Map the call state machine to gaze + facial mood. */
   setState(state: AvatarState): void {
     const head = this.head;
     if (!head || !this._ready || state === this.lastState) return;
     this.lastState = state;
     if (state === "thinking") {
-      head.lookAhead(2000); // glance away while processing
+      // Pondering: glance away and let the face settle to a calmer, neutral read
+      // so the "thinking" beat is legible against the warm speaking face.
+      this.setMood(THINKING_MOOD);
+      head.lookAhead(2000);
+    } else if (state === "speaking") {
+      // Warm and animated while presenting: eye contact plus the "happy" mood's
+      // speaking animation (brows, head-sway, micro-mouth) carry the expressiveness.
+      this.setMood(DEFAULT_MOOD);
+      head.makeEyeContact(3000);
     } else {
-      head.lookAtCamera(500); // engage the user when idle/listening/speaking
+      // idle / listening: attentive, smiling, looking at the user.
+      this.setMood(DEFAULT_MOOD);
+      head.lookAtCamera(500);
+    }
+  }
+
+  /** Set the facial mood (face + head-sway only; never touches the body rig). */
+  setMood(mood: string): void {
+    const head = this.head;
+    if (!head) return;
+    try {
+      head.setMood(mood);
+    } catch {
+      // Unknown mood name (build mismatch): keep the current face rather than throw.
     }
   }
 

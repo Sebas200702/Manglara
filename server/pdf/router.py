@@ -11,7 +11,7 @@ from config import (
     SUPABASE_STORAGE_BUCKET,
     GEMINI_API_KEY,
 )
-from db import get_document, list_documents, delete_document
+from db import get_document, list_documents, delete_document, set_document_status
 from storage import StorageClient
 from pdf.ingest import ingest_document
 from pdf.models import DocumentOut, IngestResponse, ActivateResponse
@@ -57,6 +57,37 @@ async def delete_doc(doc_id: str):
     if doc_id in _active_documents:
         _active_documents.remove(doc_id)
     return {"ok": True}
+
+
+@router.post("/{doc_id}/archive")
+async def archive_doc(doc_id: str, reason: str | None = None):
+    """Invalidate a document without deleting it: it stays stored (row, chunks,
+    digest) but is excluded from activation, so it no longer reaches the Live
+    prompt or retrieval. Reversible via /unarchive. Requires migration 004."""
+    doc = await get_document(doc_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    await set_document_status(
+        doc_id,
+        "archived",
+        message=reason or "Archivado: reemplazado por una versión más reciente.",
+    )
+    if doc_id in _active_documents:
+        _active_documents.remove(doc_id)
+    logger.info("[pdf] archived document %s (%s)", doc_id, doc["name"])
+    return {"ok": True, "document_id": doc_id, "status": "archived"}
+
+
+@router.post("/{doc_id}/unarchive")
+async def unarchive_doc(doc_id: str):
+    doc = await get_document(doc_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    await set_document_status(doc_id, "ready", message="")
+    if doc_id not in _active_documents:
+        _active_documents.append(doc_id)
+    logger.info("[pdf] unarchived document %s (%s)", doc_id, doc["name"])
+    return {"ok": True, "document_id": doc_id, "status": "ready"}
 
 
 @router.post("/upload", response_model=IngestResponse)

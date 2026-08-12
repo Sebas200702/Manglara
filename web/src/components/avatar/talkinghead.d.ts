@@ -87,6 +87,8 @@ declare module "@met4citizen/talkinghead" {
     opt: TalkingHeadOptions;
     /** True while the stream worklet is actually playing audio out. */
     isSpeaking: boolean;
+    /** Named pose templates; we register rig-safe body-language ones at load. */
+    gestureTemplates: Record<string, Record<string, unknown>>;
 
     showAvatar(
       avatar: ShowAvatarOptions,
@@ -100,6 +102,10 @@ declare module "@met4citizen/talkinghead" {
     lookAtCamera(t: number): void;
     lookAhead(t: number): void;
     makeEyeContact(t: number): void;
+    /** Play a named pose from gestureTemplates; holds `dur` s, eases over `ms`. */
+    playGesture(name: string, dur?: number, mirror?: boolean, ms?: number): void;
+    /** Relax the current gesture back to the idle pose over `ms`. */
+    stopGesture(ms?: number): void;
     start(): void;
     stop(): void;
 

@@ -77,6 +77,13 @@ export function useCallScreen() {
     controllerRef.current?.setState(avatarState);
   }, [avatarState]);
 
+  // Half-duplex: while Manglara is speaking, suppress the mic so her voice over
+  // an external speaker isn't captured and echoed back into a self-reply loop.
+  // `speaking` reflects real playback end in both the avatar and fallback paths.
+  useEffect(() => {
+    clientRef.current?.setInputSuppressed(speaking);
+  }, [speaking]);
+
   const startCall = async () => {
     setError(null);
     setLoading(true);

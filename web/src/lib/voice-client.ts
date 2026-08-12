@@ -93,7 +93,7 @@ function frameWorkerBlobUrl(): string {
 
 function wsUrl(path = "/ws/voice"): string {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//localhost:3000${path}`;
+  return `${proto}//localhost:8000${path}`;
 }
 
 const VIDEO_FRAME_INTERVAL_MS = 1500;
@@ -103,6 +103,14 @@ const VIDEO_FRAME_INTERVAL_MS = 1500;
  */
 const VIDEO_FRAME_WIDTH = 640;
 const VIDEO_FRAME_HEIGHT = 480;
+
+/**
+ * After Manglara stops speaking, wait this long before reopening the mic. Guards
+ * against the tail of her audio (played through external speakers) being captured
+ * and echoed back as a new user turn - which is what makes her answer herself in
+ * a loop. Also absorbs brief mid-turn playback underruns without reopening.
+ */
+const MIC_REOPEN_GUARD_MS = 500;
 
 export class VoiceClient {
   private ws: WebSocket | null = null;
@@ -119,6 +127,12 @@ export class VoiceClient {
   /** A frame is in the worker; don't queue another behind it. */
   private framePending = false;
   private micEnabled = true;
+  /**
+   * Half-duplex gate: true while Manglara is speaking, so her voice isn't fed
+   * back into the model. Separate from `micEnabled`, the user's manual mute.
+   */
+  private micSuppressed = false;
+  private micReopenTimer: ReturnType<typeof setTimeout> | null = null;
   private cameraEnabled = true;
   private callbacks: VoiceClientCallbacks;
   private audioChunkSink: ((pcm: ArrayBuffer) => void) | null = null;
@@ -263,6 +277,10 @@ export class VoiceClient {
         console.warn("[voice] ws not open, dropping audio chunk");
         return;
       }
+      // While Manglara is speaking, don't forward mic audio: with an external
+      // speaker her own voice gets captured and echoed back to the model, so she
+      // hears herself and replies in a loop. Reopens shortly after she finishes.
+      if (this.micSuppressed) return;
       const payload: ClientToServerMessage = {
         type: "audio",
         data: bufferToBase64(event.data),
@@ -279,6 +297,28 @@ export class VoiceClient {
     this.micEnabled = enabled;
     const track = this.micStream?.getAudioTracks()[0];
     if (track) track.enabled = enabled;
+  }
+
+  /**
+   * Half-duplex gate driven by Manglara's speaking state. While suppressed, mic
+   * audio is dropped instead of sent, so her voice over external speakers can't
+   * be transcribed back into a self-reply loop. On release, the mic reopens only
+   * after a short guard delay to let the audio tail die out. Independent of the
+   * manual mute: `setMicEnabled` still governs the user's own on/off.
+   */
+  setInputSuppressed(suppressed: boolean): void {
+    if (this.micReopenTimer) {
+      clearTimeout(this.micReopenTimer);
+      this.micReopenTimer = null;
+    }
+    if (suppressed) {
+      this.micSuppressed = true;
+    } else {
+      this.micReopenTimer = setTimeout(() => {
+        this.micSuppressed = false;
+        this.micReopenTimer = null;
+      }, MIC_REOPEN_GUARD_MS);
+    }
   }
 
   setCameraEnabled(enabled: boolean): void {
@@ -445,6 +485,11 @@ export class VoiceClient {
       this.frameWorkerUrl = null;
     }
     this.framePending = false;
+    if (this.micReopenTimer) {
+      clearTimeout(this.micReopenTimer);
+      this.micReopenTimer = null;
+    }
+    this.micSuppressed = false;
     this.micEnabled = true;
     this.cameraEnabled = true;
 

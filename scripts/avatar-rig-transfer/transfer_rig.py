@@ -330,7 +330,7 @@ def transfer_weights_data_transfer(target_obj, source_obj, armature):
     dt.object = source_obj
     dt.use_vert_data = True
     dt.data_types_verts = {"VGROUP_WEIGHTS"}
-    dt.vert_mapping = "POLYINTERP_NEAREST"  # Nearest Face Interpolated
+    dt.vert_mapping = "NEAREST"
     dt.mix_mode = "REPLACE"
     dt.mix_factor = 1.0
 
@@ -339,6 +339,12 @@ def transfer_weights_data_transfer(target_obj, source_obj, armature):
     bpy.ops.object.modifier_apply(modifier=dt.name)
 
     remove_prefix_from_vertex_groups(target_obj)
+
+    # Limit to 4 bone influences per vertex to reduce boil / ballooning
+    bpy.ops.object.vertex_group_limit_total(limit=4)
+    bpy.ops.object.vertex_group_clean(
+        group_select_mode="ALL", limit=0.005, keep_single=False
+    )
     log("  Weight transfer complete")
 
 

@@ -40,20 +40,66 @@ def extract_text_pdf(path: str) -> list[dict]:
     return pages
 
 
+def _iter_docx_blocks(doc):
+    """Yield paragraphs and tables in document order. python-docx exposes
+    ``doc.paragraphs`` and ``doc.tables`` as separate collections, so reading
+    only paragraphs silently drops every table."""
+    from docx.oxml.table import CT_Tbl
+    from docx.oxml.text.paragraph import CT_P
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    for child in doc.element.body.iterchildren():
+        if isinstance(child, CT_P):
+            yield Paragraph(child, doc)
+        elif isinstance(child, CT_Tbl):
+            yield Table(child, doc)
+
+
+def _table_to_text(table) -> str:
+    """Render a table as one row per line, cells joined by ' | '. The agenda
+    and minuto-a-minuto schedules (hora/actividad/responsable) live entirely
+    in tables; dropping them would strip every time, activity and speaker."""
+    lines = []
+    for row in table.rows:
+        cells = [" ".join(c.text.split()) for c in row.cells]
+        # Horizontally merged cells repeat the same text across grid columns.
+        deduped: list[str] = []
+        for c in cells:
+            if c and (not deduped or deduped[-1] != c):
+                deduped.append(c)
+        if deduped:
+            lines.append(" | ".join(deduped))
+    return "\n".join(lines)
+
+
 def extract_text_docx(path: str) -> list[dict]:
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
     doc = DocxDocument(path)
-    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+    blocks: list[str] = []
+    for item in _iter_docx_blocks(doc):
+        if isinstance(item, Paragraph):
+            text = item.text.strip()
+            if text:
+                blocks.append(text)
+        elif isinstance(item, Table):
+            text = _table_to_text(item)
+            if text.strip():
+                blocks.append(text)
+
     pages = []
     buffer = ""
     line = 1
 
-    for para in paragraphs:
-        if len(buffer) + len(para) < 3000:
-            buffer += "\n\n" + para if buffer else para
+    for block in blocks:
+        if len(buffer) + len(block) < 3000:
+            buffer += "\n\n" + block if buffer else block
         else:
             pages.append({"page_num": line, "text": buffer})
             line += 1
-            buffer = para
+            buffer = block
 
     if buffer:
         pages.append({"page_num": line, "text": buffer})

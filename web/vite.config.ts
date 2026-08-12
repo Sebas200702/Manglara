@@ -25,7 +25,7 @@ export default defineConfig({
     port: process.env.PORT ? Number(process.env.PORT) : 5173,
     proxy: {
       "/ws": {
-        target: "ws://localhost:3000",
+        target: "ws://localhost:8000",
         ws: true,
       },
     },

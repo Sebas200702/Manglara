@@ -66,6 +66,45 @@ const AVATAR_URL = "/custom_avatar.glb";
 const DEFAULT_MOOD = "happy";
 const THINKING_MOOD = "neutral";
 
+/**
+ * Rig-safe "body language" gestures. Manglara's arm geometry is welded to the
+ * SHOULDER bone (the arm skeleton sits in an A-pose outside the arms-down mesh),
+ * so any real arm gesture balloons her dress - measured live: `handup` inflates
+ * the skirt into a ~30 cm "wing"; see the gesture-rig-validation memory. These
+ * templates rotate ONLY the torso/neck/head bones (Spine1/Spine2/Neck/Head),
+ * which deform cleanly, giving her lively presenting body language with ZERO
+ * ballooning. Values are absolute local Euler rotations (rad), kept small for a
+ * warm, professional read. Verified in-engine (full-body screenshots).
+ */
+type BoneEuler = { x: number; y: number; z: number };
+const BODY_GESTURES: Record<string, Record<string, BoneEuler>> = {
+  // Engaged lean toward the user - the workhorse "I'm presenting to you" beat.
+  leanIn: {
+    "Spine1.rotation": { x: 0.09, y: 0.0, z: 0.0 },
+    "Spine2.rotation": { x: 0.05, y: 0.03, z: 0.0 },
+    "Neck.rotation": { x: -0.05, y: 0.05, z: 0.0 },
+    "Head.rotation": { x: -0.03, y: 0.07, z: 0.0 },
+  },
+  // Gentle affirmation nod.
+  nod: {
+    "Neck.rotation": { x: 0.1, y: 0.0, z: 0.0 },
+    "Head.rotation": { x: 0.12, y: 0.0, z: 0.0 },
+  },
+  // Curious head tilt - warmth while making a point.
+  tiltCurious: {
+    "Neck.rotation": { x: 0.0, y: 0.03, z: 0.1 },
+    "Head.rotation": { x: -0.02, y: 0.08, z: 0.09 },
+  },
+  // Subtle upper-body weight shift for liveliness between the stronger beats.
+  sway: {
+    "Spine1.rotation": { x: 0.02, y: 0.06, z: -0.05 },
+    "Neck.rotation": { x: 0.0, y: -0.04, z: 0.03 },
+    "Head.rotation": { x: 0.0, y: -0.03, z: 0.04 },
+  },
+};
+/** Weighted toward the gentle lean/nod; one is played every few seconds while speaking. */
+const BODY_GESTURE_POOL = ["leanIn", "nod", "leanIn", "tiltCurious", "nod", "sway"];
+
 /** Vendored HeadAudio (audio-driven viseme detection). Served from public/. */
 const HEADAUDIO_BASE = "/headaudio";
 
@@ -123,6 +162,10 @@ export class AvatarController {
   private lastState: AvatarState | null = null;
   private _ready = false;
   private disposed = false;
+  /** Self-rescheduling timer that plays rig-safe body-language while speaking. */
+  private bodyLangTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Alternate the mirror flag so beats don't always lean the same way. */
+  private bodyLangMirror = false;
 
   // Sprite mouth: the avatar GLB ships a "MouthOverlay" patch hugging the
   // mouth region (transparent at rest). Each frame we paint a viseme-driven
@@ -246,6 +289,7 @@ export class AvatarController {
       // Framing tuned for the Manglara character (big afro): "head" view
       // crops her — "upper" + extra distance shows hair and shoulders.
       head.setView("upper", { cameraDistance: 1.5, cameraY: 0.5 });
+      this.registerBodyLanguage(head);
       this.setupMouthSprite(head);
       // Single per-frame hook, wired before any streaming starts so the mouth
       // works regardless of whether HeadAudio (the fallback) ever loads.
@@ -272,6 +316,10 @@ export class AvatarController {
       dbg.__mood = (mood: string) => {
         this.setMood(mood);
         console.log("[mood]", mood);
+      };
+      dbg.__body = (name: string) => {
+        this.playBodyGesture(name);
+        console.log("[body]", name);
       };
       dbg.__hold = (viseme: string | null) => {
         this.hold(viseme);
@@ -839,15 +887,72 @@ export class AvatarController {
       // so the "thinking" beat is legible against the warm speaking face.
       this.setMood(THINKING_MOOD);
       head.lookAhead(2000);
+      this.stopBodyLanguage();
     } else if (state === "speaking") {
       // Warm and animated while presenting: eye contact plus the "happy" mood's
-      // speaking animation (brows, head-sway, micro-mouth) carry the expressiveness.
+      // speaking animation (brows, head-sway, micro-mouth) PLUS rig-safe torso/
+      // head body language (lean-in, nods, tilts) - lively presenting without
+      // touching the arm rig that would balloon the dress.
       this.setMood(DEFAULT_MOOD);
       head.makeEyeContact(3000);
+      this.startBodyLanguage();
     } else {
-      // idle / listening: attentive, smiling, looking at the user.
+      // idle / listening: attentive, smiling, looking at the user, with a single
+      // gentle lean-in so she reads as actively listening.
       this.setMood(DEFAULT_MOOD);
       head.lookAtCamera(500);
+      this.stopBodyLanguage();
+      this.playBodyGesture("leanIn");
+    }
+  }
+
+  /**
+   * Register the rig-safe body-language poses (see BODY_GESTURES) into
+   * TalkingHead's gestureTemplates so `playGesture` can drive them. Touches only
+   * torso/neck/head bones, so it never balloons the arm-welded dress.
+   */
+  private registerBodyLanguage(head: TalkingHead): void {
+    if (!head.gestureTemplates) return;
+    for (const [name, tmpl] of Object.entries(BODY_GESTURES)) {
+      head.gestureTemplates[name] = tmpl as Record<string, unknown>;
+    }
+  }
+
+  /** Play one body-language beat; holds briefly then eases back to idle. */
+  private playBodyGesture(name: string): void {
+    const head = this.head;
+    if (!head) return;
+    try {
+      head.playGesture(name, 2.5, this.bodyLangMirror, 700);
+    } catch {
+      // Unknown template / build mismatch: skip rather than break the call.
+    }
+    this.bodyLangMirror = !this.bodyLangMirror;
+  }
+
+  /** Start the speaking-time body-language loop (idempotent). */
+  private startBodyLanguage(): void {
+    if (this.bodyLangTimer || !this.head) return;
+    const tick = () => {
+      const name =
+        BODY_GESTURE_POOL[Math.floor(Math.random() * BODY_GESTURE_POOL.length)];
+      this.playBodyGesture(name);
+      this.bodyLangTimer = setTimeout(tick, 3500 + Math.random() * 2500);
+    };
+    // First beat shortly after she starts speaking.
+    this.bodyLangTimer = setTimeout(tick, 600);
+  }
+
+  /** Stop the loop and relax any held pose back to idle. */
+  private stopBodyLanguage(): void {
+    if (this.bodyLangTimer) {
+      clearTimeout(this.bodyLangTimer);
+      this.bodyLangTimer = null;
+    }
+    try {
+      this.head?.stopGesture(600);
+    } catch {
+      // ignore
     }
   }
 
@@ -864,6 +969,7 @@ export class AvatarController {
 
   dispose(): void {
     this.disposed = true;
+    this.stopBodyLanguage();
     this.stopStream();
     try {
       this.headAudio?.disconnect?.();

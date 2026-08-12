@@ -125,6 +125,22 @@ async def update_document_digest(document_id: str, digest: str):
         resp.raise_for_status()
 
 
+async def set_document_status(
+    document_id: str, status: str, message: str | None = None
+):
+    payload: dict = {"status": status}
+    if message is not None:
+        payload["message"] = message
+    async with httpx.AsyncClient() as client:
+        resp = await client.patch(
+            f"{BASE}/documents",
+            params={"id": f"eq.{document_id}"},
+            json=payload,
+            headers=HEADERS,
+        )
+        resp.raise_for_status()
+
+
 async def delete_document(document_id: str) -> bool:
     async with httpx.AsyncClient() as client:
         resp = await client.delete(

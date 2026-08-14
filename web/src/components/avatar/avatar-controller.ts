@@ -3,6 +3,11 @@ import { TalkingHead } from "@met4citizen/talkinghead";
 import type { PlaybackMetricsMessage } from "@met4citizen/talkinghead";
 import { CanvasTexture, MeshBasicMaterial, SRGBColorSpace } from "three";
 import type { Mesh } from "three";
+// Statically bundle the English lip-sync processor. TalkingHead otherwise loads
+// it via `import('./lipsync-en.mjs')` - an un-analyzable dynamic import that
+// Rollup can't bundle, so in production it 404s at /assets/lipsync-en.mjs. We
+// import it here (Vite bundles it) and register it on the instance below.
+import { LipsyncEn } from "@met4citizen/talkinghead/modules/lipsync-en.mjs";
 import { spanishTextToUnits, unitsDuration } from "./lipsync-es";
 import { VisemeDriver } from "./viseme-driver";
 import { blendLipShapes } from "./lip-shapes";
@@ -52,7 +57,7 @@ const PACE_RATE_KEY = "manglara.lipsync.paceRate";
  * Transfered rig + 52 ARKit + 15 Oculus + 5 extra blend shapes from
  * TalkingHead's brunette.glb reference onto the user's manglara.glb mesh.
  */
-const AVATAR_URL = "/custom_avatar.glb";
+const AVATAR_URL = import.meta.env.VITE_AVATAR_URL ?? "/custom_avatar.glb";
 
 /**
  * Facial mood expressiveness (rig-safe: moods drive only face + head-sway, never
@@ -263,7 +268,10 @@ export class AvatarController {
     // this instance down even while showAvatar is still loading.
     const head = new TalkingHead(this.node, {
       ttsEndpoint: "", // unused: TTS comes from Gemini Live
-      lipsyncModules: ["en"], // visemes come from HeadAudio, not text
+      // Empty so TalkingHead does NOT fire its dynamic import('./lipsync-en.mjs')
+      // (404 in prod). We register the statically-imported processor right after
+      // construction instead. Visemes come from HeadAudio/VisemeDriver anyway.
+      lipsyncModules: [],
       lipsyncLang: "en",
       cameraView: "head",
       cameraRotateEnable: false,
@@ -277,6 +285,9 @@ export class AvatarController {
       modelFPS: 30,
     });
     this.head = head;
+    // Register the statically-bundled lip-sync processor (see import note). This
+    // replaces TalkingHead's dynamic-import path so it works in the prod bundle.
+    head.lipsync = { en: new LipsyncEn() };
 
     try {
       await head.showAvatar({

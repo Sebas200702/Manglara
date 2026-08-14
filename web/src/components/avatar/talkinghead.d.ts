@@ -89,6 +89,8 @@ declare module "@met4citizen/talkinghead" {
     isSpeaking: boolean;
     /** Named pose templates; we register rig-safe body-language ones at load. */
     gestureTemplates: Record<string, Record<string, unknown>>;
+    /** Per-language lip-sync processors; we register one statically at load. */
+    lipsync: Record<string, unknown>;
 
     showAvatar(
       avatar: ShowAvatarOptions,
@@ -121,5 +123,13 @@ declare module "@met4citizen/talkinghead" {
     streamInterrupt(): void;
     streamStop(): void;
     dispose(): void;
+  }
+}
+
+declare module "@met4citizen/talkinghead/modules/lipsync-en.mjs" {
+  /** English text/word -> Oculus viseme processor (self-contained). */
+  export class LipsyncEn {
+    preProcessText(s: string): string;
+    wordsToVisemes(w: string): unknown;
   }
 }

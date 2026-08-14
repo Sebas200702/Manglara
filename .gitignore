@@ -14,4 +14,6 @@ web/public/ragatha_test*.glb
 web/public/vrm_test.glb
 scripts/avatar-rig-transfer/output/
 scripts/avatar-rig-transfer/refs/*.glb
-web/public/custom_avatar.glb
+# NOTE: custom_avatar.glb (Manglara, the foundation's own character) IS committed
+# so the deployed app can serve it (avatar 404'd in prod otherwise). If you move
+# it to a CDN, set VITE_AVATAR_URL instead and re-add the ignore below.

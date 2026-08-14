@@ -19,6 +19,11 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), tailwindcss()],
     resolve: {
+      // Force a single THREE instance across app code, TalkingHead, and the
+      // aliased addons. Without this the production bundle evaluated three twice
+      // ("Multiple instances of Three.js being imported"), which breaks texture
+      // sharing between avatar-controller and TalkingHead's renderer.
+      dedupe: ["three"],
       alias: [
         // TalkingHead imports `three/addons/...`, which only exists via importmap
         // in the browser. Map it to three's npm `examples/jsm` for bundling.

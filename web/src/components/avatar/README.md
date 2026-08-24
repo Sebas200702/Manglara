@@ -129,37 +129,32 @@ El texto va por otro camino: `voice-client.ts` → `onTranscript(role, text)` �
   se trabara — intercambia dos drivers muy distintos varias veces por segundo. De
   ahí `HANDOVER_AFTER_DRY_MS = 900`: hace falta una sequía sostenida para ceder.
   Una boca en reposo un momento es mucho mejor que una boca dando manotazos.
-- **El sprite necesita más de dos parámetros.** ⚠️ La boca visible es un canvas
-  pintado sobre el parche `MouthOverlay`. Cuando se dibujaba solo con *cuánto
-  abre* y *cuán ancha*, era **geométricamente imposible** distinguir fonemas:
-  /f/ y /s/ son ambos "poco abierto y bastante ancho", igual que /m/ y /p/ y el
-  silencio. Con la secuencia de visemas correcta seguía leyéndose como un óvalo
-  abriendo y cerrando. [`lip-shapes.ts`](./lip-shapes.ts) da a cada visema
-  rasgos explícitos: apertura, anchura, redondez, protrusión, qué dientes se
-  ven, altura de la lengua, y el pliegue labio-bajo-dientes que identifica /f/.
+- **La boca ya es geometría, no un sprite.** ⚠️ Histórico, por si vuelve a
+  aparecer un avatar con la boca sellada: el modelo anterior no tenía cavidad
+  bucal, así que se pintaba un canvas sobre un parche `MouthOverlay` para fingir
+  la abertura. Ese camino ya no existe. El avatar del diseñador trae visemas
+  reales sobre una boca modelada (dientes, encías, lengua) y `writeVisemeMorphs`
+  los escribe directamente; ver [`fix_avatar_morphs.py`](../../../../scripts/avatar-rig-transfer/README.md)
+  para lo que hay que parchear en cada entrega. [`lip-shapes.ts`](./lip-shapes.ts)
+  sobrevive porque el driver sigue razonando en rasgos (apertura, anchura,
+  redondez, protrusión, dientes visibles, altura de lengua), que es lo que hace
+  falta para elegir visema: dibujando solo con *cuánto abre* y *cuán ancha* era
+  **geométricamente imposible** separar /f/ de /s/, o /m/ de /p/ del silencio.
 - **Grupos homófenos**: /t/, /d/, /n/, /l/ (y /θ/) se ven **igual** desde fuera —
   ni un lector de labios humano los separa. El test exige separación *entre*
   grupos, no dentro; pedir lo contrario sería pedir una mentira.
-- **Trampas del dibujo en canvas** (las tres costaron una iteración cada una):
-  1. ⚠️ **El trazo del contorno labial va ANTES de los rellenos.** Trazarlo al
-     final se come 3 px hacia dentro en todo el perímetro; en una apertura fina
-     como /s/ (17 px de alto) eso es un tercio de la abertura en negro, lo que
-     sepulta dientes y lengua y se ve como un hueco vacío.
-  2. **Los radios de `roundRect` hay que acotarlos** a la caja (`hw*0.5` son
-     ~80 px): un radio mayor que media altura colapsa la forma.
-  3. **La banda de dientes se escala con la APERTURA, no con el canvas.** Con `H`
-     una /a/ abierta salía 73% dientes (mancha blanca); con un valor fijo de
-     22 px se iba al otro extremo y quedaba vacía.
-  La lengua **siempre** está presente en una boca abierta; `tongue` es su
-  ALTURA (arriba en /t/,/d/,/n/,/l/; baja y plana en /a/), no su visibilidad.
-  Composición sana medida por píxel: /a/ ≈ 27% dientes / 24% lengua / 49% oscuro.
+  Ojo: en este rig el parecido va más allá de la fonética. `diag_morph_distinct.py`
+  mide coseno > 0.98 entre `jawOpen`, `viseme_aa`, `viseme_nn`, `viseme_TH`,
+  `viseme_kk` y `viseme_SS` — las consonantes son el mismo gesto a distinta
+  amplitud. Quedan cinco bocas realmente distintas: cerrada (`PP`), labiodental
+  (`FF`), abierta (`aa`), estirada (`E`/`I`) y redondeada (`O`/`U`).
 - **Probar los labios sin llamar a Gemini**: en la consola,
   `__sayTest("el manglar protege la costa")` mueve la boca con audio en
   silencio. `__hold("U")` fija un visema para inspeccionar su forma
   (`__hold(null)` lo libera). `__lipsyncLog()` imprime cada 250 ms qué fuente
   manda, la forma actual, lo pendiente en cola y el buffer de audio — úsalo para
   responder preguntas de sincronía con datos en vez de suposiciones.
-  También están `__head` y `__drawMouth`.
+  También está `__head`.
 - **Tests** (`bun test src/` desde `web/`): la fonética española y el ritmo del
   driver son funciones puras, sin three.js ni DOM, precisamente para poder
   testearlos — el canvas en vivo no se puede verificar desde aquí.
@@ -185,12 +180,21 @@ El texto va por otro camino: `voice-client.ts` → `onTranscript(role, text)` �
 
 ## Reemplazar el avatar
 
-El avatar actual es de **Ready Player Me** (Wolf3D). Para cambiarlo:
+El avatar en producción es **`public/MANGLARIASK.glb`**: el personaje de la
+fundación, entregado por el diseñador ya riggeado (esqueleto con nombres Mixamo
+y 72 blend shapes ARKit + visemas Oculus propios). Cada entrega nueva pasa una
+vez por [`scripts/avatar-rig-transfer/`](../../../../scripts/avatar-rig-transfer/README.md)
+— auditar con `diag_morphs.py`, parchear con `fix_avatar_morphs.py`, verificar
+en el navegador. Ahí está el detalle de qué se corrige y por qué.
 
-1. Crea un avatar en [readyplayer.me](https://readyplayer.me) y copia el ID.
-2. Descarga: `https://models.readyplayer.me/<ID>.glb?morphTargets=ARKit,Oculus%20Visemes`
-3. Reemplaza `public/avatar1.glb` con el archivo descargado.
-4. Ajusta `body: "M"` o `body: "F"` en `avatar-controller.ts` según el género.
+`public/avatar1.glb` es un **Ready Player Me** (Wolf3D) que se conserva solo como
+referencia de un rig correcto: útil para comparar contra una entrega dudosa
+(`python probe_glb.py`). No se sirve. Para regenerarlo: crea un avatar en
+[readyplayer.me](https://readyplayer.me) y descarga
+`https://models.readyplayer.me/<ID>.glb?morphTargets=ARKit,Oculus%20Visemes`.
+
+`body: "M"` / `body: "F"` en `avatar-controller.ts` selecciona el set de
+animaciones corporales de TalkingHead, independientemente del GLB.
 
 **Nota sobre Avaturn:** Los exports web de Avaturn (incluso "Avatar with animation")
 no incluyen morph targets. Para usar Avaturn se necesita acceso a la API/SDK para

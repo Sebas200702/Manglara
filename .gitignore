@@ -12,8 +12,30 @@ __pycache__/
 # Local-only avatar pipeline test assets (third-party IP — not for commit/deploy)
 web/public/ragatha_test*.glb
 web/public/vrm_test.glb
-scripts/avatar-rig-transfer/output/
-scripts/avatar-rig-transfer/refs/*.glb
-# NOTE: custom_avatar.glb (Manglara, the foundation's own character) IS committed
+
+# scripts/avatar-rig-transfer/ is an allowlist: the folder accumulates one-off
+# Blender probes written to chase a single artifact (a smeared weight, a dark
+# vertex, a bad viseme) and heavy derived output — GLB iterations and QA render
+# sheets, ~1.4 GB at its peak. Those stay on disk for whoever is mid-investigation
+# but never enter the repo. Only the tools that still apply to the current
+# designer-rigged avatar are tracked.
+scripts/avatar-rig-transfer/*
+!scripts/avatar-rig-transfer/README.md
+!scripts/avatar-rig-transfer/fix_avatar_morphs.py
+!scripts/avatar-rig-transfer/add_hair_bones.py
+!scripts/avatar-rig-transfer/remove_zfight_layer.py
+!scripts/avatar-rig-transfer/fix_rig_scale.py
+!scripts/avatar-rig-transfer/fix_skirt_weights.py
+!scripts/avatar-rig-transfer/diag_skirt_weights.py
+!scripts/avatar-rig-transfer/diag_morphs.py
+!scripts/avatar-rig-transfer/diag_morph_distinct.py
+!scripts/avatar-rig-transfer/diag_hair_bones.py
+!scripts/avatar-rig-transfer/probe_glb.py
+!scripts/avatar-rig-transfer/probe_hair.py
+!scripts/avatar-rig-transfer/probe_beads.py
+!scripts/avatar-rig-transfer/qa_render.py
+!scripts/avatar-rig-transfer/soften_dress_texture.py
+
+# NOTE: MANGLARIASK.glb (Manglara, the foundation's own character) IS committed
 # so the deployed app can serve it (avatar 404'd in prod otherwise). If you move
 # it to a CDN, set VITE_AVATAR_URL instead and re-add the ignore below.

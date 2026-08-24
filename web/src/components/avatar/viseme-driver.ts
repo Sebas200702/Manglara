@@ -24,11 +24,26 @@ export interface AudioFrameInput {
   volume?: number;
 }
 
+/**
+ * Loudness (as a fraction of the speaker's recent peak) below which the frame is
+ * treated as a consonant closure rather than a quiet vowel. Speech is not a
+ * continuous vowel: /p/, /b/, /m/, /t/, /k/ are *silences with the mouth shut*,
+ * and a classifier that only ever ranks frequency bands has no way to emit one -
+ * it keeps picking whichever vowel the residual energy resembles, so the mouth
+ * chatters open through every stop. This is what made syllables not line up with
+ * what was being said.
+ */
+const CLOSURE_LOUDNESS = 0.34;
+/** Time constant for the running loudness peak the closure test is relative to. */
+const PEAK_DECAY_MS = 1200;
+
 export class VisemeDriver {
   private currentViseme: string | null = null;
   private currentShape: LipShape = { ...REST };
   private visemeWeights: Record<string, number> = {};
   private smoothedVolume = 0;
+  /** Slow-decaying loudness peak, so the closure test adapts to the speaker. */
+  private peakVolume = 0;
 
   constructor() {
     this.resetWeights();
@@ -47,6 +62,20 @@ export class VisemeDriver {
 
   get currentLipShape(): LipShape {
     return this.currentShape;
+  }
+
+  /**
+   * How hard the current shape should be pushed onto the rig, 0..1.
+   *
+   * Loudness relative to the speaker's recent peak, not an absolute level, so it
+   * survives a quiet mic or a loud one. The controller multiplies the morph
+   * weight by this: without it every frame of speech is written at full strength
+   * and the avatar bellows every syllable at maximum aperture regardless of
+   * whether she is emphasising a word or trailing off.
+   */
+  get intensity(): number {
+    if (this.peakVolume <= 1e-4) return 0;
+    return Math.min(1, this.smoothedVolume / this.peakVolume);
   }
 
   get backlogMs(): number {
@@ -77,6 +106,7 @@ export class VisemeDriver {
     this.currentViseme = null;
     this.currentShape = { ...REST };
     this.smoothedVolume = 0;
+    this.peakVolume = 0;
     this.resetWeights();
   }
 
@@ -112,6 +142,14 @@ export class VisemeDriver {
       const volAlpha = Math.min(1, dt / 45);
       this.smoothedVolume = this.smoothedVolume * (1 - volAlpha) + rms * volAlpha;
     }
+
+    // Track the speaker's recent loudness peak. Decays slowly so a single loud
+    // syllable does not flatten everything after it, but fast enough to follow a
+    // change of speaking level within a sentence or two.
+    this.peakVolume = Math.max(
+      this.smoothedVolume,
+      this.peakVolume * (1 - Math.min(1, dt / PEAK_DECAY_MS))
+    );
 
     // Silence handling: smooth closure towards REST
     if (this.smoothedVolume < 0.02) {
@@ -157,17 +195,30 @@ export class VisemeDriver {
     const total = lowEnergy + midEnergy + highEnergy;
     let selectedViseme = "aa";
 
-    if (total > 0.01) {
+    if (this.intensity < CLOSURE_LOUDNESS) {
+      // A dip well below the speaker's own level, with sound still present: a
+      // stop or a nasal. Shut the lips.
+      selectedViseme = "PP";
+    } else if (total > 0.01) {
+      // Ratios only. The thresholds these replaced compared a band average
+      // against an absolute level (`highEnergy > 0.55`), and a band average of a
+      // normalised FFT rarely clears 0.5 - so the /s/ and /o/ branches almost
+      // never fired and nearly everything fell through to the wide-open default.
       const highRatio = highEnergy / total;
       const lowRatio = lowEnergy / total;
+      const midRatio = midEnergy / total;
 
-      if (highRatio > 0.42) {
-        selectedViseme = highEnergy > 0.55 ? "SS" : "FF";
-      } else if (lowRatio > 0.48) {
-        selectedViseme = lowEnergy > 0.5 ? "O" : "U";
-      } else if (midEnergy > lowEnergy) {
-        selectedViseme = midEnergy > 0.5 ? "I" : "E";
+      if (highRatio > 0.45) {
+        // Sibilant. The more the energy piles into the top band, the closer the
+        // teeth: /s/ is a narrow slit, /f/ has the lip tucked under.
+        selectedViseme = highRatio > 0.62 ? "SS" : "FF";
+      } else if (lowRatio > 0.55) {
+        // Rounded back vowel. /u/ is the more extreme pucker of the two.
+        selectedViseme = lowRatio > 0.92 ? "U" : "O";
+      } else if (midRatio > 0.5) {
+        selectedViseme = midRatio > 0.65 ? "I" : "E";
       } else {
+        // Energy spread evenly across the bands - that is /a/, an open tract.
         selectedViseme = "aa";
       }
     }
@@ -192,11 +243,14 @@ export class VisemeDriver {
     // Blend dominant shapes organically using feature table
     const targetShape = blendLipShapes((k) => this.visemeWeights[k] ?? 0);
 
-    // Scale aperture smoothly by RMS volume with a non-linear soft-knee curve
-    const volumeApertureScale = Math.min(1.15, Math.pow(Math.max(0, this.smoothedVolume * 3.2), 0.75));
+    // Scale aperture smoothly by RMS volume with an expressive soft-knee curve
+    const volumeApertureScale = Math.min(
+      1.25,
+      0.45 + Math.pow(Math.max(0, this.smoothedVolume * 2.8), 0.6) * 0.75
+    );
     const scaledTarget: LipShape = {
       ...targetShape,
-      aperture: Math.min(1, targetShape.aperture * volumeApertureScale),
+      aperture: Math.min(1.1, targetShape.aperture * volumeApertureScale),
     };
 
     // Smooth LERP to target shape
@@ -207,7 +261,14 @@ export class VisemeDriver {
   }
 
   /** Legacy compatibility wrapper */
-  tick(input: { dt: number; speaking: boolean; audioFedMs?: number; playedMs?: number }): string | null {
+  tick(input: {
+    dt: number;
+    speaking: boolean;
+    audioFedMs?: number;
+    playedMs?: number;
+    /** Dry-run preview: let the clock run free instead of chasing playback. */
+    naturalPace?: boolean;
+  }): string | null {
     if (!input.speaking) {
       this.reset();
       return null;

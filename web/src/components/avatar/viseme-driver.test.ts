@@ -67,6 +67,38 @@ describe("AudioVisemeEngine (Real-Time WebAudio Lip Sync)", () => {
     expect(driver.currentLipShape.aperture).toBe(0);
   });
 
+  test("a dip below the speaker's own level closes the lips (/p/, /b/, /m/)", () => {
+    const driver = new VisemeDriver();
+    // Establish a speaking level.
+    for (let f = 0; f < 20; f++) driver.tickFrame({ dt: 16, volume: 0.6 });
+    expect(driver.shape).not.toBe("PP");
+
+    // A stop consonant: still audible, but far below the running peak. The old
+    // classifier had no closure branch at all and kept picking a vowel here,
+    // which is why the mouth never shut mid-word.
+    let viseme: string | null = null;
+    for (let f = 0; f < 4; f++) {
+      viseme = driver.tickFrame({ dt: 16, volume: 0.08 });
+    }
+    expect(viseme).toBe("PP");
+  });
+
+  test("intensity tracks loudness relative to the speaker's peak", () => {
+    const driver = new VisemeDriver();
+    for (let f = 0; f < 20; f++) driver.tickFrame({ dt: 16, volume: 0.7 });
+    const loud = driver.intensity;
+
+    for (let f = 0; f < 6; f++) driver.tickFrame({ dt: 16, volume: 0.2 });
+    const quiet = driver.intensity;
+
+    expect(loud).toBeGreaterThan(0.9);
+    expect(quiet).toBeLessThan(loud);
+    // Never negative, never over 1 - the controller multiplies a morph weight
+    // by this and a value above 1 would drive the rig past its authored shape.
+    expect(quiet).toBeGreaterThanOrEqual(0);
+    expect(loud).toBeLessThanOrEqual(1);
+  });
+
   test("reset clears engine state", () => {
     const driver = new VisemeDriver();
     driver.tickFrame({ dt: 16, volume: 0.8 });

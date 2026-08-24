@@ -18,6 +18,28 @@ declare module "@met4citizen/talkinghead" {
 
   type BoneCorrection = { x?: number; y?: number; z?: number; rx?: number; ry?: number; rz?: number };
 
+  /**
+   * One spring-damper bone. Note that the library rotates the PARENT of the
+   * named bone, so a chain of N bones gives N-1 usable entries.
+   */
+  export interface DynamicBoneConfig {
+    /** Must have a bone as its parent, or setup throws. */
+    bone: string;
+    type: "point" | "link" | "mix1" | "mix2" | "full";
+    /** Mass-normalised spring constant, m/s^2. */
+    stiffness: number;
+    /** Mass-normalised damping coefficient, 1/s. */
+    damping: number;
+    /** 0 = rigid with the parent, 1 = full inertia. Default 1. */
+    external?: number;
+    /** Per-axis [low, high] clamp in metres, as [x, y, z, twist]. */
+    limits?: ([number | null, number | null] | null)[];
+    /** Free-hang along world Y: the parent's X/Z rotation is compensated. */
+    pivot?: boolean;
+    excludes?: { bone: string; deltaLocal?: number[]; radius: number }[];
+    helper?: boolean;
+  }
+
   export interface ShowAvatarOptions {
     url: string;
     body?: "M" | "F";
@@ -25,6 +47,7 @@ declare module "@met4citizen/talkinghead" {
     avatarMood?: string;
     baseline?: Record<string, number>;
     retarget?: Record<string, BoneCorrection | number>;
+    modelDynamicBones?: DynamicBoneConfig[];
     [key: string]: unknown;
   }
 
@@ -75,6 +98,15 @@ declare module "@met4citizen/talkinghead" {
   export interface MorphTargetEntry {
     newvalue: number | null;
     needsUpdate: boolean;
+    /**
+     * The `morphTargetInfluences` arrays this morph lives in, and the index it
+     * occupies in each. One entry per mesh carrying the target - the designer
+     * rig splits the head into skin/brows/teeth primitives, so a single viseme
+     * spans three of them. Writing `ms[i][is[i]]` applies it on the spot,
+     * ahead of TalkingHead's own easing pass.
+     */
+    ms?: Array<Float32Array | number[] | undefined>;
+    is?: number[];
     [key: string]: unknown;
   }
 

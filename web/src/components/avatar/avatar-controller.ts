@@ -211,14 +211,18 @@ const DEFAULT_MOOD = "happy";
 const THINKING_MOOD = "neutral";
 
 /**
- * Rig-safe "body language" gestures. Manglara's arm geometry is welded to the
- * SHOULDER bone (the arm skeleton sits in an A-pose outside the arms-down mesh),
- * so any real arm gesture balloons her dress - measured live: `handup` inflates
- * the skirt into a ~30 cm "wing"; see the gesture-rig-validation memory. These
- * templates rotate ONLY the torso/neck/head bones (Spine1/Spine2/Neck/Head),
- * which deform cleanly, giving her lively presenting body language with ZERO
- * ballooning. Values are absolute local Euler rotations (rad), kept small for a
- * warm, professional read. Verified in-engine (full-body screenshots).
+ * Torso "body language" beats, interleaved with the arm gestures in
+ * `startBodyLanguage`.
+ *
+ * These used to be the ONLY body language, because on the retired Tripo avatar
+ * the arm geometry was welded to the shoulder bone and any arm gesture inflated
+ * the skirt into a ~30 cm wing. That does not apply to the designer's rig:
+ * re-measured in-engine, the dress is 0.771 m wide at rest, 0.775 m under
+ * `handup` and 0.773 m under a talking-hands beat - a 4 mm difference. So the
+ * arms are free now, and these remain as punctuation between hand gestures.
+ *
+ * Values are absolute local Euler rotations (rad), kept small for a warm,
+ * professional read. Rotating only Spine1/Spine2/Neck/Head deforms cleanly.
  */
 type BoneEuler = { x: number; y: number; z: number };
 const BODY_GESTURES: Record<string, Record<string, BoneEuler>> = {
@@ -512,9 +516,15 @@ export class AvatarController {
         modelDynamicBones: HAIR_DYNAMIC_BONES,
       });
       if (this.disposed) return; // disposed mid-load → dispose() handles teardown
-      // Framing tuned for the Manglara character (big afro): "head" view
-      // crops her — "upper" + extra distance shows hair and shoulders.
-      head.setView("upper", { cameraDistance: 1.5, cameraY: 0.5 });
+      // Framing: wide enough to include the hands.
+      //
+      // This was 1.5 / 0.5, which cropped just below the collarbone. That was
+      // fine when the body language was torso-only, but the talking-hands
+      // gestures put the forearms around chest and belly height, and at that
+      // distance they played entirely off-screen. Pulled back to where the
+      // frame reaches the waist: the gestures land in shot and the face is
+      // still large enough to read the mouth and the gaze.
+      head.setView("upper", { cameraDistance: 2.6, cameraY: 0.75 });
       this.registerBodyLanguage(head);
       this.setupTeethAndTongue(head);
       this.captureEyeBones(head);
@@ -1261,14 +1271,50 @@ export class AvatarController {
     this.bodyLangMirror = !this.bodyLangMirror;
   }
 
-  /** Start the speaking-time body-language loop (idempotent). */
+  /**
+   * One beat of talking hands: TalkingHead IK-solves both arms to a random
+   * nearby target and eases them there and back.
+   *
+   * The library calls this itself, but exactly once per `playback-started`, so
+   * a long answer got a single gesture in its first second and then went still.
+   * Driving it on the same cadence as the torso beats keeps the hands alive for
+   * the whole turn.
+   *
+   * `speakWithHands` bails out if a gesture is already playing (`this.gesture`),
+   * which is why hands and torso share one scheduler instead of running two
+   * timers that would silently starve each other.
+   */
+  private playTalkingHands(): void {
+    const head = this.head;
+    if (!head) return;
+    try {
+      head.stopGesture(400); // clear any held torso pose, or this is a no-op
+      head.speakWithHands(0, 1);
+    } catch {
+      // Older build without the IK path: fall back to a torso beat.
+    }
+  }
+
+  /**
+   * Start the speaking-time body-language loop (idempotent).
+   *
+   * Alternates arms and torso. Roughly two hand beats per torso beat: the hands
+   * carry most of conversational body language, and the torso leans read as
+   * punctuation between them.
+   */
   private startBodyLanguage(): void {
     if (this.bodyLangTimer || !this.head) return;
+    let beat = 0;
     const tick = () => {
-      const name =
-        BODY_GESTURE_POOL[Math.floor(Math.random() * BODY_GESTURE_POOL.length)];
-      this.playBodyGesture(name);
-      this.bodyLangTimer = setTimeout(tick, 3500 + Math.random() * 2500);
+      if (beat % 3 === 2) {
+        const name =
+          BODY_GESTURE_POOL[Math.floor(Math.random() * BODY_GESTURE_POOL.length)];
+        this.playBodyGesture(name);
+      } else {
+        this.playTalkingHands();
+      }
+      beat++;
+      this.bodyLangTimer = setTimeout(tick, 2600 + Math.random() * 2200);
     };
     // First beat shortly after she starts speaking.
     this.bodyLangTimer = setTimeout(tick, 600);

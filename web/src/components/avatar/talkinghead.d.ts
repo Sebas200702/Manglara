@@ -140,6 +140,12 @@ declare module "@met4citizen/talkinghead" {
     playGesture(name: string, dur?: number, mirror?: boolean, ms?: number): void;
     /** Relax the current gesture back to the idle pose over `ms`. */
     stopGesture(ms?: number): void;
+    /**
+     * IK-solve both arms to a random nearby target and ease them there and
+     * back: conversational hand movement. Silently does nothing if a gesture is
+     * already playing, if the pose is not standing, or if `prob` does not hit.
+     */
+    speakWithHands(delay?: number, prob?: number): void;
     start(): void;
     stop(): void;
 

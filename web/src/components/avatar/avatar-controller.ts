@@ -156,7 +156,7 @@ const PACE_RATE_KEY = "manglara.lipsync.paceRate";
  * key, and the source stored every zero: 79.6 MB -> 23.3 MB, no geometry lost.
  * Audit any GLB with `diag_morphs.py` / `diag_morph_distinct.py` in that folder.
  */
-const AVATAR_URL = import.meta.env.VITE_AVATAR_URL ?? "/MANGLARIASK.glb";
+const AVATAR_URL = import.meta.env.VITE_AVATAR_URL ?? "/brunette.glb";
 
 /**
  * Physics for the two braids, added by

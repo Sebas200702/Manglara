@@ -1,10 +1,9 @@
 /**
- * Mangrove environment backdrop: a muted looping video plus ambient sound.
+ * Looping mangrove video backdrop.
  *
- * The video is shown only during the call (behind the avatar); in the lobby it
- * is replaced by an explanatory panel (see call-screen.tsx). The ambient audio
- * track is started on a user gesture (call start) and ducked while Manglaria
- * is talking so it never competes with her voice.
+ * Autoplay requires the video to be muted; ambient sound is handled by the
+ * separate looping <audio> track, started on a user gesture (call start) and
+ * ducked during the call so it never competes with Manglara's voice.
  */
 import { useEffect, useRef, useState } from "react";
 
@@ -12,15 +11,12 @@ const VIDEO_SRC = "/mangrove-loop.mp4";
 const AMBIENT_SRC = "/mangrove-ambient.mp3";
 
 export function MangroveVideo({
-  showVideo = false,
   ambient = false,
   ducked = false,
 }: {
-  /** render the looping video backdrop (pass true while in a call) */
-  showVideo?: boolean;
   /** start the ambient audio loop (pass a user-gesture-driven flag) */
   ambient?: boolean;
-  /** lower the ambient volume while Manglaria is talking */
+  /** lower the ambient volume while Manglara is talking */
   ducked?: boolean;
 }) {
   const [videoOk, setVideoOk] = useState(true);
@@ -40,7 +36,7 @@ export function MangroveVideo({
 
   return (
     <div className="absolute inset-0 z-0 overflow-hidden">
-      {showVideo && videoOk && (
+      {videoOk && (
         <video
           className="size-full object-cover"
           src={VIDEO_SRC}

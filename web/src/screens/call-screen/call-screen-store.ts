@@ -8,20 +8,12 @@ function nextEntryId(): string {
   return `t-${++entryCounter}-${Date.now()}`;
 }
 
-export type NoticeTone = "warn" | "success";
-export interface Notice {
-  text: string;
-  tone: NoticeTone;
-}
-
 interface CallScreenState {
   connection: ConnectionState;
   speaking: boolean;
   thinking: boolean;
   inCall: boolean;
   error: string | null;
-  /** Transient status feedback (e.g. connection lost / reconnected). */
-  notice: Notice | null;
   transcripts: TranscriptEntry[];
   loading: boolean;
   chatOpen: boolean;
@@ -32,7 +24,6 @@ interface CallScreenState {
   setThinking: (thinking: boolean) => void;
   setInCall: (inCall: boolean) => void;
   setError: (error: string | null) => void;
-  setNotice: (notice: Notice | null) => void;
   setLoading: (loading: boolean) => void;
   setChatOpen: (chatOpen: boolean | ((open: boolean) => boolean)) => void;
   setMicEnabled: (enabled: boolean) => void;
@@ -48,7 +39,6 @@ export const useCallScreenStore = create<CallScreenState>((set) => ({
   thinking: false,
   inCall: false,
   error: null,
-  notice: null,
   transcripts: [],
   loading: false,
   chatOpen: false,
@@ -59,8 +49,7 @@ export const useCallScreenStore = create<CallScreenState>((set) => ({
   setSpeaking: (speaking) => set({ speaking }),
   setThinking: (thinking) => set({ thinking }),
   setInCall: (inCall) => set({ inCall }),
-  setError: (error) => set({ error, notice: null }),
-  setNotice: (notice) => set({ notice }),
+  setError: (error) => set({ error }),
   setLoading: (loading) => set({ loading }),
   setChatOpen: (chatOpen) =>
     set((state) => ({
@@ -94,7 +83,6 @@ export const useCallScreenStore = create<CallScreenState>((set) => ({
       speaking: false,
       thinking: false,
       connection: "disconnected",
-      notice: null,
       chatOpen: false,
       micEnabled: true,
       cameraEnabled: true,

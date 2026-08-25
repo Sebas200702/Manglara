@@ -1,18 +1,8 @@
 import type { AvatarState } from "@manglara/shared";
 import { TalkingHead } from "@met4citizen/talkinghead";
-import type {
-  DynamicBoneConfig,
-  PlaybackMetricsMessage,
-} from "@met4citizen/talkinghead";
-import {
-  Bone,
-  Color,
-  Euler,
-  Mesh,
-  MeshStandardMaterial,
-  Object3D,
-  Quaternion,
-} from "three";
+import type { PlaybackMetricsMessage } from "@met4citizen/talkinghead";
+import { CanvasTexture, MeshBasicMaterial, SRGBColorSpace } from "three";
+import type { Mesh } from "three";
 // Statically bundle the English lip-sync processor. TalkingHead otherwise loads
 // it via `import('./lipsync-en.mjs')` - an un-analyzable dynamic import that
 // Rollup can't bundle, so in production it 404s at /assets/lipsync-en.mjs. We
@@ -20,100 +10,19 @@ import {
 import { LipsyncEn } from "@met4citizen/talkinghead/modules/lipsync-en.mjs";
 import { spanishTextToUnits, unitsDuration } from "./lipsync-es";
 import { VisemeDriver } from "./viseme-driver";
+import { blendLipShapes } from "./lip-shapes";
+import type { LipShape } from "./lip-shapes";
 
 /** Assistant audio from Gemini Live is 24 kHz, 16-bit LE PCM. */
 const GEMINI_SAMPLE_RATE = 24000;
 
 /**
- * Ceiling on how far any single viseme may be driven, before the per-viseme
- * calibration below.
- *
- * Talking is a small movement. This rig's `viseme_aa` drops the jaw 4 cm at
- * full weight, which is a yawn - conversational speech is nearer a third of
- * that. Started at 1.05 (every frame at full strength), then 0.78; both still
- * read as gaping on camera. Judge any change at the app's own framing, not on
- * a mouth close-up: filling the frame hides how large the movement is relative
- * to the face.
+ * Mouth-shape strength. Higher than TalkingHead's own 0.6 for visemes because
+ * the whole point here is that the shapes be readable.
  */
-const VISEME_LEVEL = 0.46;
-/**
- * Softest the mouth may move while still audibly speaking. Without a floor the
- * quiet tail of a sentence stops moving the lips at all, which reads as the
- * audio continuing over a frozen face.
- */
-const VISEME_LEVEL_MIN = 0.14;
-
-/**
- * Per-viseme gain, because a morph weight of 1.0 does not mean the same thing
- * from one target to the next on this rig.
- *
- * `diag_morph_distinct.py` measures how far each viseme actually displaces the
- * mouth region. Normalised against `viseme_aa`: `O` moves 1.18x and `U` 1.12x -
- * *more* than the widest vowel - while `SS` moves 0.27x and `FF` 0.29x. Driving
- * them all at one level therefore gapes on every rounded vowel and does nothing
- * visible on the sibilants. Each gain is roughly the aperture the viseme should
- * read at (see LIP_SHAPES in lip-shapes.ts) divided by the travel it actually
- * has. Re-measure and retune if the designer redelivers the rig.
- */
-/**
- * Extra morphs layered on top of each viseme, and how hard.
- *
- * The viseme targets on this rig are not as distinct as their names suggest:
- * `diag_morph_distinct.py` measures cosine 0.99 between `viseme_O`, `viseme_CH`
- * and `viseme_RR`, and 0.98 between `viseme_aa`, `viseme_nn`, `viseme_TH` and
- * `jawOpen`. Driving the viseme alone therefore produces a mouth that mostly
- * just opens and closes. The ARKit targets that *are* independent - pucker,
- * funnel, roll, press, stretch, the per-side smile - carry the articulation the
- * visemes lack, so each one gets a small chord of them instead of a single note.
- *
- * Deliberately avoids `mouthSmile`, `cheekSquint*` and the brow targets:
- * `updateFacialExpressions` owns those for the conversational state and the two
- * writers would fight over the same slot every frame.
- */
-const VISEME_EXTRAS: Record<string, Record<string, number>> = {
-  // Open vowel: let the jaw carry it rather than stretching the lips wider.
-  // Kept modest - this stacks on top of viseme_aa, which already drops the jaw.
-  aa: { jawOpen: 0.16, mouthLowerDownLeft: 0.12, mouthLowerDownRight: 0.12 },
-  // Front vowels spread the corners. /i/ more than /e/.
-  E: { mouthSmileLeft: 0.24, mouthSmileRight: 0.24, mouthStretchLeft: 0.18, mouthStretchRight: 0.18 },
-  I: { mouthSmileLeft: 0.34, mouthSmileRight: 0.34, mouthStretchLeft: 0.3, mouthStretchRight: 0.3 },
-  // Rounded back vowels. Funnel opens the ring, pucker pushes it forward.
-  O: { mouthFunnel: 0.45, mouthPucker: 0.26 },
-  U: { mouthPucker: 0.6, mouthFunnel: 0.3 },
-  // /f/, /v/: lower lip rolled under the upper teeth - the one unmistakable
-  // consonant shape, and worth spending morphs on.
-  FF: { mouthRollLower: 0.45, mouthUpperUpLeft: 0.22, mouthUpperUpRight: 0.22 },
-  // /s/: narrow slit, corners drawn back, teeth nearly meeting.
-  SS: { mouthStretchLeft: 0.26, mouthStretchRight: 0.26, mouthClose: 0.16 },
-  // Bilabial closure. Pressing and rolling both lips is what makes it read as
-  // shut rather than merely small.
-  PP: { mouthPressLeft: 0.5, mouthPressRight: 0.5, mouthRollLower: 0.2, mouthRollUpper: 0.2 },
-  CH: { mouthPucker: 0.34, mouthFunnel: 0.2 },
-  RR: { mouthPucker: 0.2, mouthFunnel: 0.12 },
-  kk: { jawOpen: 0.18 },
-  DD: { mouthUpperUpLeft: 0.12, mouthUpperUpRight: 0.12 },
-  nn: { mouthShrugUpper: 0.15 },
-  TH: { mouthLowerDownLeft: 0.12, mouthLowerDownRight: 0.12 },
-};
-
-const VISEME_GAIN: Record<string, number> = {
-  aa: 1.0,
-  E: 0.74,
-  I: 0.45,
-  O: 0.55,
-  U: 0.32,
-  // Consonants: small movers on this rig, so they need a higher gain just to
-  // register - except PP, which is a closure and has to be unambiguous.
-  PP: 1.0,
-  FF: 0.45,
-  SS: 0.55,
-  TH: 0.7,
-  DD: 0.62,
-  nn: 0.72,
-  kk: 1.0,
-  CH: 0.5,
-  RR: 0.6,
-};
+const VISEME_LEVEL = 0.78;
+/** Lip closure (P/B/M, F/V) has to look definite to read as a closure. */
+const VISEME_LEVEL_CLOSED = 0.95;
 
 /**
  * How long the shape queue must stay dry, with audio still playing, before the
@@ -144,59 +53,11 @@ const MAX_OUTPUT_LATENCY_MS = 300;
 const PACE_RATE_KEY = "manglara.lipsync.paceRate";
 
 /**
- * Avatar delivered by the designer, already rigged with its own facial blend
- * shapes - no rig transfer, no donor skeleton, no reweighting. The file in
- * public/ is that delivery passed once through
- * `scripts/avatar-rig-transfer/fix_avatar_morphs.py`, which touches three things
- * and nothing else: the brow mesh now follows the face on every key (it only
- * carried three), `eyesLookUp`/`eyesLookDown` are filled in from the per-eye
- * keys TalkingHead's mood table expects, and the dental assembly sits back far
- * enough to leave a dark cavity in the small apertures. The re-export also
- * stores the morph deltas sparsely - ~11% of the skin's 30k vertices move per
- * key, and the source stored every zero: 79.6 MB -> 23.3 MB, no geometry lost.
- * Audit any GLB with `diag_morphs.py` / `diag_morph_distinct.py` in that folder.
+ * Custom avatar generated by scripts/avatar-rig-transfer/.
+ * Transfered rig + 52 ARKit + 15 Oculus + 5 extra blend shapes from
+ * TalkingHead's brunette.glb reference onto the user's manglara.glb mesh.
  */
-const AVATAR_URL = import.meta.env.VITE_AVATAR_URL ?? "/brunette.glb";
-
-/**
- * Physics for the two braids, added by
- * `scripts/avatar-rig-transfer/add_hair_bones.py`.
- *
- * The designer rig skins the braids rigidly to `Head`, so they were welded to
- * the skull: she could turn and nod and the hair moved as one solid piece,
- * which is most of what made her read as plastic. Each braid now carries a
- * three-bone chain and TalkingHead's DynamicBones swings it.
- *
- * Why the chains have three bones and only the last two appear here: "link"
- * updates the *parent's* quaternions, so an entry for `HairL1` would rotate
- * `Head` itself and bob the whole skull. Entries on bones 2 and 3 articulate
- * bones 1 and 2 and leave the head alone.
- *
- * `pivot: true` on the upper joint is the gravity: it compensates the parent's
- * X/Z rotation so the braid hangs down the world Y-axis instead of being
- * carried rigidly by the head - tilt her head and the braid stays vertical,
- * then catches up. Stiffness/damping are in the range the library's own
- * ponytail example uses, scaled up because these braids are 9 cm and light
- * rather than long and heavy. The `limits` on the lower joint cap the swing so
- * a fast head turn cannot throw a braid through her cheek.
- */
-const HAIR_DYNAMIC_BONES: DynamicBoneConfig[] = ["L", "R"].flatMap((side) => [
-  {
-    bone: `Hair${side}2`,
-    type: "link",
-    stiffness: 260,
-    damping: 11,
-    external: 0.85,
-    pivot: true,
-  },
-  {
-    bone: `Hair${side}3`,
-    type: "link",
-    stiffness: 380,
-    damping: 12,
-    limits: [[-0.03, 0.03], null, [-0.03, 0.03], null],
-  },
-]);
+const AVATAR_URL = import.meta.env.VITE_AVATAR_URL ?? "/custom_avatar.glb";
 
 /**
  * Facial mood expressiveness (rig-safe: moods drive only face + head-sway, never
@@ -211,18 +72,14 @@ const DEFAULT_MOOD = "happy";
 const THINKING_MOOD = "neutral";
 
 /**
- * Torso "body language" beats, interleaved with the arm gestures in
- * `startBodyLanguage`.
- *
- * These used to be the ONLY body language, because on the retired Tripo avatar
- * the arm geometry was welded to the shoulder bone and any arm gesture inflated
- * the skirt into a ~30 cm wing. That does not apply to the designer's rig:
- * re-measured in-engine, the dress is 0.771 m wide at rest, 0.775 m under
- * `handup` and 0.773 m under a talking-hands beat - a 4 mm difference. So the
- * arms are free now, and these remain as punctuation between hand gestures.
- *
- * Values are absolute local Euler rotations (rad), kept small for a warm,
- * professional read. Rotating only Spine1/Spine2/Neck/Head deforms cleanly.
+ * Rig-safe "body language" gestures. Manglara's arm geometry is welded to the
+ * SHOULDER bone (the arm skeleton sits in an A-pose outside the arms-down mesh),
+ * so any real arm gesture balloons her dress - measured live: `handup` inflates
+ * the skirt into a ~30 cm "wing"; see the gesture-rig-validation memory. These
+ * templates rotate ONLY the torso/neck/head bones (Spine1/Spine2/Neck/Head),
+ * which deform cleanly, giving her lively presenting body language with ZERO
+ * ballooning. Values are absolute local Euler rotations (rad), kept small for a
+ * warm, professional read. Verified in-engine (full-body screenshots).
  */
 type BoneEuler = { x: number; y: number; z: number };
 const BODY_GESTURES: Record<string, Record<string, BoneEuler>> = {
@@ -253,57 +110,6 @@ const BODY_GESTURES: Record<string, Record<string, BoneEuler>> = {
 /** Weighted toward the gentle lean/nod; one is played every few seconds while speaking. */
 const BODY_GESTURE_POOL = ["leanIn", "nod", "leanIn", "tiltCurious", "nod", "sway"];
 
-/**
- * How far the eyeballs turn, in radians, per unit of TalkingHead's gaze value.
- *
- * TalkingHead does not rotate eye bones. It converts its internal `eyesRotateX`
- * / `eyesRotateY` into the ARKit *morphs* `eyeLook{In,Out}{Left,Right}` and
- * `eyesLook{Up,Down}`, which on a Ready Player Me avatar deform the eyeball mesh
- * itself. On this rig those morphs live on the SKIN - they move the lids and the
- * flesh around the socket - while the eyeballs are separate meshes carrying no
- * morph targets at all, weighted 100% to `LeftEye`/`RightEye`. So the lids
- * tracked the gaze and the irises never moved. We read the gaze back out of the
- * morphs and turn the bones ourselves.
- *
- * Its gaze values run [-0.6, 0.6] horizontally and [-0.2, 0.6] vertically, so
- * these give a ~21 degree maximum saccade sideways: a conversational glance,
- * not a cartoon eye-roll.
- */
-const EYE_YAW_RAD = 0.6;
-const EYE_PITCH_RAD = 0.5;
-
-/**
- * Idle gaze wander, layered on top of whatever TalkingHead decides.
- *
- * Measured over 25-second windows, the library moves the eyes horizontally on
- * roughly 7% of frames - its saccades fire on a 2-10 second timer, so between
- * them the gaze is perfectly still, which reads as a doll. Its vertical range is
- * also deliberately asymmetric (`eyesRotateX: [[-0.2, 0.6]]`, three times
- * further down than up), so she almost never looks up.
- *
- * This adds a slow continuous drift in both axes to fill the gaps. Amplitudes
- * are small on purpose: enough that the eyes are never frozen, not so much that
- * she looks shifty. The two frequencies per axis are incommensurate, so the
- * pattern does not visibly repeat, and it needs no random source in the render
- * loop.
- */
-const EYE_WANDER_YAW_RAD = 0.07; // ~4 degrees
-const EYE_WANDER_PITCH_RAD = 0.045; // ~2.6 degrees
-/** Ceiling on the combined gaze, so the wander can never push the iris into the corner. */
-const EYE_MAX_YAW_RAD = 0.42;
-const EYE_MAX_PITCH_RAD = 0.32;
-/**
- * Cancels TalkingHead's constant downward gaze bias.
- *
- * Its camera look-at computes `eyesRotateX: [-3 * drotx + 0.1]` - the `0.1` is a
- * hardcoded stylistic offset for its reference avatar, not part of the look-at
- * maths. Combined with the asymmetric saccade range it puts a hard floor under
- * the vertical gaze: measured over 34 seconds the pitch never once went above
- * level, so she could look down, left and right but never up. 0.1 gaze units
- * times EYE_PITCH_RAD is exactly this much.
- */
-const EYE_PITCH_TRIM = 0.05;
-
 /** Vendored HeadAudio (audio-driven viseme detection). Served from public/. */
 const HEADAUDIO_BASE = "/headaudio";
 
@@ -321,10 +127,6 @@ function loadPaceRate(): number | null {
   } catch {
     return null; // private mode / storage disabled
   }
-}
-
-function clamp01(v: number): number {
-  return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 
 function savePaceRate(rate: number): void {
@@ -370,25 +172,14 @@ export class AvatarController {
   /** Alternate the mirror flag so beats don't always lean the same way. */
   private bodyLangMirror = false;
 
-
-
-  /** Eye bones plus their bind rotation, so gaze is applied as a delta. */
-  private eyeBones: { bone: Bone; rest: Quaternion }[] = [];
-  private readonly eyeEuler = new Euler();
-  private readonly eyeDelta = new Quaternion();
-  /** Seconds since load, driving the idle gaze wander. */
-  private eyeClock = 0;
-
-  // Expressive Facial Gestures & Blend Shapes
-  private currentState: AvatarState = "idle";
-  private currentFacialMorphs: Record<string, number> = {};
-  private speechEmphasisTimer = 0;
-  private speechEmphasisValue = 0;
-
-  // The mouth is pure geometry now. The designer rig carries real viseme blend
-  // shapes over a modelled cavity (teeth, gums, tongue), so the canvas sprite
-  // that used to fake an opening on the old sealed mesh is gone - see
-  // scripts/avatar-rig-transfer/diag_morphs.py for the per-target audit.
+  // Sprite mouth: the avatar GLB ships a "MouthOverlay" patch hugging the
+  // mouth region (transparent at rest). Each frame we paint a viseme-driven
+  // mouth (dark cavity + teeth) onto it, so the character visibly opens her
+  // mouth while talking - morphs alone can't show a cavity on a sealed mesh.
+  private mouthMesh: Mesh | null = null;
+  private mouthCtx: CanvasRenderingContext2D | null = null;
+  private mouthTex: CanvasTexture | null = null;
+  private lastShape: LipShape | null = null;
 
   // Text-driven lip-sync. Mouth shapes come from the transcript and are consumed
   // against the audio playback clock rather than scheduled at absolute times:
@@ -492,15 +283,6 @@ export class AvatarController {
       // the expressiveness the arm gestures can't safely provide on this mesh.
       avatarMood: DEFAULT_MOOD,
       modelFPS: 30,
-      // --- Lighting: the default rig (direct=30, ambient=2, RoomEnvironment)
-      // reads far too brilliant on the dark Manglara skin, so we dial it down
-      // here instead of hacking the TalkingHead bundle.
-      lightAmbientColor: 0xfff1e0,
-      lightAmbientIntensity: 0.9,
-      lightDirectColor: 0xffffff,
-      lightDirectIntensity: 12,
-      lightSpotColor: 0x3388ff,
-      lightSpotIntensity: 0,
     });
     this.head = head;
     // Register the statically-bundled lip-sync processor (see import note). This
@@ -513,21 +295,13 @@ export class AvatarController {
         body: "F",
         lipsyncLang: "en",
         avatarMood: DEFAULT_MOOD,
-        modelDynamicBones: HAIR_DYNAMIC_BONES,
       });
       if (this.disposed) return; // disposed mid-load → dispose() handles teardown
-      // Framing: wide enough to include the hands.
-      //
-      // This was 1.5 / 0.5, which cropped just below the collarbone. That was
-      // fine when the body language was torso-only, but the talking-hands
-      // gestures put the forearms around chest and belly height, and at that
-      // distance they played entirely off-screen. Pulled back to where the
-      // frame reaches the waist: the gestures land in shot and the face is
-      // still large enough to read the mouth and the gaze.
-      head.setView("upper", { cameraDistance: 2.6, cameraY: 0.75 });
+      // Framing tuned for the Manglara character (big afro): "head" view
+      // crops her — "upper" + extra distance shows hair and shoulders.
+      head.setView("upper", { cameraDistance: 1.5, cameraY: 0.5 });
       this.registerBodyLanguage(head);
-      this.setupTeethAndTongue(head);
-      this.captureEyeBones(head);
+      this.setupMouthSprite(head);
       // Single per-frame hook, wired before any streaming starts so the mouth
       // works regardless of whether HeadAudio (the fallback) ever loads.
       // TalkingHead calls this right before it applies morph targets.
@@ -538,28 +312,9 @@ export class AvatarController {
         // both write the same `newvalue` slot, so only one may win per frame.
         // Running after us means it takes over cleanly when text runs dry.
         this.headAudio?.update(dt);
-        this.updateFacialExpressions(dt);
-        // Last: it reads the gaze morphs the two calls above may have written,
-        // and TalkingHead applies bone matrices after `opt.update` returns.
-        this.updateEyeGaze(dt);
+        this.drawMouth();
       };
       head.start();
-      // Tame the remaining brilliance: the RoomEnvironment map adds bright
-      // specular reflections on the skin, and ACES tone mapping defaults to
-      // full exposure. Soften both so the dark skin reads correctly.
-      // `scene`/`renderer` are runtime props on the TalkingHead instance but
-      // not surfaced by its typings, hence the structural cast.
-      const th = head as unknown as {
-        scene?: { environmentIntensity?: number };
-        renderer?: { toneMappingExposure: number };
-      };
-      if (th.scene) {
-        // three r0.155+ supports a global environment intensity multiplier.
-        th.scene.environmentIntensity = 0.45;
-      }
-      if (th.renderer) {
-        th.renderer.toneMappingExposure = 0.9;
-      }
       this._ready = true;
       // Expose for manual debugging in the console.
       const dbg = window as unknown as Record<string, unknown>;
@@ -734,123 +489,40 @@ export class AvatarController {
     this.haveMetrics = true;
   }
 
-  /**
-   * Set one named morph, on every mesh that carries it.
-   *
-   * `newvalue` alone would do, but TalkingHead eases it over its own frames.
-   * Writing the influence arrays too lands the value on the frame it was
-   * chosen on. The designer rig splits the head across skin/brow/teeth
-   * primitives, so `mt.ms` routinely holds three arrays for one viseme.
-   */
-  /**
-   * Turn the eyeballs to match the gaze TalkingHead has already decided.
-   *
-   * Runs every frame off the morph values rather than off our own logic, so the
-   * eyes inherit everything the library does for free: eye contact with the
-   * camera, idle saccades, the per-mood gaze offsets, and the look-away while
-   * thinking. See EYE_YAW_RAD for why the bones need driving at all.
-   *
-   * Axis convention was measured on this rig, not assumed - after the `Hips`
-   * lesson. The eye bones sit in a near-identity frame relative to the head:
-   * local +X maps to world (0.992, 0.022, 0.122), +Y to (-0.049, 0.975, 0.217)
-   * and +Z to (-0.115, -0.221, 0.968), and the bone-to-iris direction is
-   * (0.043, 0.052, 0.998). So local Z is the line of sight, Y is yaw and X is
-   * pitch, with positive rotations matching TalkingHead's own sign convention
-   * (`eyesRotateY > 0` looks to her left; `eyesRotateX > 0` looks down).
-   */
-  private updateEyeGaze(dt: number): void {
-    const head = this.head;
-    const eyes = this.eyeBones;
-    if (!head || !eyes.length) return;
-    this.eyeClock += dt / 1000;
-
-    const read = (k: string): number => {
-      const mt = head.mtAvatar[k];
-      if (!mt || !Array.isArray(mt.ms) || !Array.isArray(mt.is)) return 0;
-      const arr = mt.ms[0];
-      const idx = mt.is[0];
-      if (!arr || idx === undefined) return 0;
-      return arr[idx] ?? 0;
-    };
-
-    // Reconstruct the signed gaze from the split morph pairs TalkingHead
-    // decomposed it into. Both eyes share one direction: the library's mapping
-    // pairs "out" on one eye with "in" on the other, so they track together.
-    let yaw = (read("eyeLookOutLeft") - read("eyeLookInLeft")) * EYE_YAW_RAD;
-    let pitch =
-      (read("eyesLookDown") - read("eyesLookUp")) * EYE_PITCH_RAD - EYE_PITCH_TRIM;
-
-    const t = this.eyeClock;
-    yaw += EYE_WANDER_YAW_RAD * (Math.sin(t * 0.37) * 0.6 + Math.sin(t * 0.83) * 0.4);
-    pitch += EYE_WANDER_PITCH_RAD * (Math.sin(t * 0.29) * 0.6 + Math.sin(t * 0.61) * 0.4);
-    yaw = Math.max(-EYE_MAX_YAW_RAD, Math.min(EYE_MAX_YAW_RAD, yaw));
-    pitch = Math.max(-EYE_MAX_PITCH_RAD, Math.min(EYE_MAX_PITCH_RAD, pitch));
-
-    this.eyeEuler.set(pitch, yaw, 0, "YXZ");
-    this.eyeDelta.setFromEuler(this.eyeEuler);
-    for (const { bone, rest } of eyes) {
-      bone.quaternion.copy(rest).multiply(this.eyeDelta);
-    }
-  }
-
-  private applyMorph(head: TalkingHead, k: string, val: number): void {
-    const mt = head.mtAvatar[k];
-    if (!mt) return;
-    mt.newvalue = val;
-    mt.needsUpdate = true;
-    const { ms, is } = mt;
-    if (!Array.isArray(ms) || !Array.isArray(is)) return;
-    for (let i = 0; i < ms.length; i++) {
-      const arr = ms[i];
-      const idx = is[i];
-      if (arr && idx !== undefined) arr[idx] = val;
-    }
-  }
-
-  /**
-   * Push a shape into the morph targets, releasing whatever was held before.
-   *
-   * `intensity` is the driver's loudness relative to the speaker's own recent
-   * peak (1 = as loud as she gets). It scales the whole thing, so an emphasised
-   * word opens further than a trailing-off one instead of every syllable being
-   * written at the same maximum.
-   */
-  private writeVisemeMorphs(shape: string | null, intensity = 1): void {
+  /** Push a shape into the morph targets, releasing whatever was held before. */
+  private writeVisemeMorphs(shape: string | null): void {
     const head = this.head;
     if (!head) return;
+    const key = shape ? `viseme_${shape}` : null;
 
-    const morphsToWrite: Record<string, number> = {};
-    const applyMorph = (k: string, val: number) => this.applyMorph(head, k, val);
-
-    if (shape && shape !== "sil") {
-      const gain = VISEME_GAIN[shape] ?? 0.7;
-      // A closure is a closure at any volume - a quietly-spoken /p/ still has
-      // the lips fully together - so PP opts out of the loudness scaling.
-      const level =
-        shape === "PP"
-          ? VISEME_LEVEL
-          : VISEME_LEVEL_MIN + (VISEME_LEVEL - VISEME_LEVEL_MIN) * clamp01(intensity);
-      morphsToWrite[`viseme_${shape}`] = level * gain;
-      // Articulation chord on top of the viseme. Scaled by the same level, so
-      // a murmured /o/ purses the lips slightly and a shouted one properly.
-      for (const [k, w] of Object.entries(VISEME_EXTRAS[shape] ?? {})) {
-        morphsToWrite[k] = level * w;
+    const applyMorph = (k: string, val: number) => {
+      const mt = head.mtAvatar[k];
+      if (mt) {
+        mt.newvalue = val;
+        mt.needsUpdate = true;
+        // Synchronously copy to Three.js morphTargetInfluences so drawMouth() reads current values immediately
+        if (Array.isArray(mt.ms)) {
+          for (let i = 0; i < mt.ms.length; i++) {
+            if (mt.ms[i] && mt.is[i] !== undefined) {
+              mt.ms[i][mt.is[i]] = val;
+            }
+          }
+        }
       }
-    }
+    };
 
-    for (const [k, v] of Object.entries(morphsToWrite)) {
-      applyMorph(k, v);
+    if (key) {
+      const targetVal =
+        shape === "PP" || shape === "FF" ? VISEME_LEVEL_CLOSED : VISEME_LEVEL;
+      applyMorph(key, targetVal);
     }
-
+    // Release anything held last frame.
     for (const prev of this.writtenVisemes) {
-      if (!(prev in morphsToWrite)) {
-        applyMorph(prev, 0);
-      }
+      if (prev === key) continue;
+      applyMorph(prev, 0);
     }
     this.writtenVisemes.clear();
-    for (const k of Object.keys(morphsToWrite)) {
-      this.writtenVisemes.add(k);
-    }
+    if (key) this.writtenVisemes.add(key);
   }
 
   /**
@@ -1038,15 +710,15 @@ export class AvatarController {
         return;
       }
       this.textInCharge = true;
-      const dryShape = this.driver.tick({
-        dt,
-        speaking: true,
-        // No real audio: let the playback clock run free at natural pace.
-        audioFedMs: Number.MAX_SAFE_INTEGER,
-        naturalPace: true,
-      });
-      this.writeVisemeMorphs(dryShape, this.driver.intensity);
-
+      this.writeVisemeMorphs(
+        this.driver.tick({
+          dt,
+          speaking: true,
+          // No real audio: let the playback clock run free at natural pace.
+          audioFedMs: Number.MAX_SAFE_INTEGER,
+          naturalPace: true,
+        })
+      );
       return;
     }
 
@@ -1076,8 +748,7 @@ export class AvatarController {
     }
 
     this.textInCharge = true;
-    this.writeVisemeMorphs(shape, this.driver.intensity);
-
+    this.writeVisemeMorphs(shape);
 
     if (this.diagnose) {
       this.diagLastLog += dt;
@@ -1222,7 +893,6 @@ export class AvatarController {
     const head = this.head;
     if (!head || !this._ready || state === this.lastState) return;
     this.lastState = state;
-    this.currentState = state;
     if (state === "thinking") {
       // Pondering: glance away and let the face settle to a calmer, neutral read
       // so the "thinking" beat is legible against the warm speaking face.
@@ -1271,50 +941,14 @@ export class AvatarController {
     this.bodyLangMirror = !this.bodyLangMirror;
   }
 
-  /**
-   * One beat of talking hands: TalkingHead IK-solves both arms to a random
-   * nearby target and eases them there and back.
-   *
-   * The library calls this itself, but exactly once per `playback-started`, so
-   * a long answer got a single gesture in its first second and then went still.
-   * Driving it on the same cadence as the torso beats keeps the hands alive for
-   * the whole turn.
-   *
-   * `speakWithHands` bails out if a gesture is already playing (`this.gesture`),
-   * which is why hands and torso share one scheduler instead of running two
-   * timers that would silently starve each other.
-   */
-  private playTalkingHands(): void {
-    const head = this.head;
-    if (!head) return;
-    try {
-      head.stopGesture(400); // clear any held torso pose, or this is a no-op
-      head.speakWithHands(0, 1);
-    } catch {
-      // Older build without the IK path: fall back to a torso beat.
-    }
-  }
-
-  /**
-   * Start the speaking-time body-language loop (idempotent).
-   *
-   * Alternates arms and torso. Roughly two hand beats per torso beat: the hands
-   * carry most of conversational body language, and the torso leans read as
-   * punctuation between them.
-   */
+  /** Start the speaking-time body-language loop (idempotent). */
   private startBodyLanguage(): void {
     if (this.bodyLangTimer || !this.head) return;
-    let beat = 0;
     const tick = () => {
-      if (beat % 3 === 2) {
-        const name =
-          BODY_GESTURE_POOL[Math.floor(Math.random() * BODY_GESTURE_POOL.length)];
-        this.playBodyGesture(name);
-      } else {
-        this.playTalkingHands();
-      }
-      beat++;
-      this.bodyLangTimer = setTimeout(tick, 2600 + Math.random() * 2200);
+      const name =
+        BODY_GESTURE_POOL[Math.floor(Math.random() * BODY_GESTURE_POOL.length)];
+      this.playBodyGesture(name);
+      this.bodyLangTimer = setTimeout(tick, 3500 + Math.random() * 2500);
     };
     // First beat shortly after she starts speaking.
     this.bodyLangTimer = setTimeout(tick, 600);
@@ -1364,153 +998,225 @@ export class AvatarController {
     } catch {
       // ignore
     }
-
-    this.eyeBones = [];
+    this.mouthTex?.dispose();
+    this.mouthMesh = null;
+    this.mouthCtx = null;
+    this.mouthTex = null;
+    this.lastShape = null;
     this.headAudio = null;
     this.headAudioReady = false;
     this.head = null;
     this._ready = false;
   }
 
-  /** Grab the eye bones and their bind rotation once, for updateEyeGaze(). */
-  private captureEyeBones(head: TalkingHead): void {
-    this.eyeBones = [];
-    const root = (head as unknown as { armature?: Object3D }).armature;
-    root?.traverse((o) => {
-      const b = o as Bone;
-      if (b.isBone && (b.name === "LeftEye" || b.name === "RightEye")) {
-        this.eyeBones.push({ bone: b, rest: b.quaternion.clone() });
-      }
-    });
-    if (this.eyeBones.length !== 2) {
-      console.warn(
-        `[avatar] expected 2 eye bones, found ${this.eyeBones.length} — gaze will not move`
-      );
-    }
-  }
-
-  /** Realce de material de dientes y limpieza de vertex colors. */
-  private setupTeethAndTongue(head: TalkingHead): void {
+  /** Find the MouthOverlay patch exported by the rig pipeline and give it a
+   *  CanvasTexture we can repaint per frame. Non-fatal if missing (older GLB). */
+  private setupMouthSprite(head: TalkingHead): void {
     try {
-      const root = (head as unknown as { armature?: Object3D }).armature;
-      if (!root) return;
-
-      // 1. Limpieza de vertex colors para asegurar texturas puras sin sombras negras
-      root.traverse((o) => {
-        if ((o as Mesh).isMesh) {
-          const mesh = o as Mesh;
-          if (mesh.geometry) {
-            mesh.geometry.deleteAttribute("color");
-            mesh.geometry.deleteAttribute("Color");
-            mesh.geometry.deleteAttribute("COLOR_0");
-          }
-          if (mesh.material) {
-            const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-            for (const mat of mats) {
-              if (mat && "vertexColors" in mat) {
-                (mat as MeshStandardMaterial).vertexColors = false;
-                mat.needsUpdate = true;
-              }
-            }
-          }
-          const name = mesh.name.toLowerCase();
-          const matName = (mesh.material as any)?.name ?? "";
-          if (
-            name.includes("diente") ||
-            name.includes("teeth") ||
-            matName === "Material.002"
-          ) {
-            const mat = mesh.material as MeshStandardMaterial;
-            if (mat) {
-              mat.color = new Color(0xffffff);
-              mat.roughness = 0.12;
-              mat.metalness = 0.0;
-              // One material covers enamel, gums, tongue AND the cavity behind
-              // them, so emissive lifts the whole inside of the mouth. The old
-              // 0x383838 was there to make a flat painted patch readable; with
-              // real geometry it just washed the cavity out and every viseme
-              // read as "two rows of teeth". Keep a token amount so the teeth
-              // don't go muddy in the small apertures (/o/, /u/).
-              mat.emissive = new Color(0x101010);
-              mat.needsUpdate = true;
-            }
-          }
-        }
+      const root = (head as unknown as { armature?: Mesh }).armature;
+      let overlay: Mesh | null = null;
+      root?.traverse?.((o) => {
+        if ((o as Mesh).isMesh && o.name === "MouthOverlay") overlay = o as Mesh;
       });
-
-      console.log("[avatar] Dientes realzados y vertex colors limpiados.");
-    } catch (err) {
-      console.warn("[avatar] setupTeethAndTongue error:", err);
+      if (!overlay) {
+        console.warn("[mouth] MouthOverlay mesh not found in avatar GLB");
+        return;
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = 512;
+      canvas.height = 256;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      const tex = new CanvasTexture(canvas);
+      tex.colorSpace = SRGBColorSpace;
+      tex.flipY = false; // glTF UV convention (v=0 at the top of the patch)
+      (overlay as Mesh).material = new MeshBasicMaterial({
+        map: tex,
+        transparent: true,
+        depthWrite: false,
+      });
+      (overlay as Mesh).renderOrder = 2;
+      this.mouthMesh = overlay;
+      this.mouthCtx = ctx;
+      this.mouthTex = tex;
+      // Expose for manual debugging in the console.
+      (window as unknown as Record<string, unknown>).__drawMouth = () => this.drawMouth();
+      console.log("[mouth] sprite overlay ready");
+    } catch (error) {
+      console.warn("[mouth] sprite setup failed:", error);
     }
   }
 
-
-
-  /** Actualizar gestos faciales, cejas, ojos y sonrisa según el estado conversacional. */
-  private updateFacialExpressions(dt: number): void {
-    const head = this.head;
-    if (!head || !this._ready) return;
-
-    const targets: Record<string, number> = {
-      browInnerUp: 0,
-      browOuterUpLeft: 0,
-      browOuterUpRight: 0,
-      browDownLeft: 0,
-      browDownRight: 0,
-      eyeSquintLeft: 0,
-      eyeSquintRight: 0,
-      eyeWideLeft: 0,
-      eyeWideRight: 0,
-      cheekSquintLeft: 0,
-      cheekSquintRight: 0,
-      mouthSmile: 0,
+  /** Repaint the mouth sprite from the overlay's CURRENT morph influences
+   *  (already eased by TalkingHead, so the sprite is perfectly in sync with
+   *  the jaw/chin deformation). Called every render frame via opt.update. */
+  private drawMouth(): void {
+    const mesh = this.mouthMesh;
+    const ctx = this.mouthCtx;
+    const tex = this.mouthTex;
+    if (!mesh || !ctx || !tex) return;
+    const dict = mesh.morphTargetDictionary;
+    const inf = mesh.morphTargetInfluences;
+    if (!dict || !inf) return;
+    const v = (k: string): number => {
+      const i = dict[k];
+      return i === undefined ? 0 : inf[i] ?? 0;
     };
 
-    if (this.currentState === "speaking") {
-      // Sonrisa comunicativa viva mientras habla
-      targets.mouthSmile = 0.32;
-      targets.eyeSquintLeft = 0.2;
-      targets.eyeSquintRight = 0.2;
-      targets.cheekSquintLeft = 0.18;
-      targets.cheekSquintRight = 0.18;
+    // Use the organically LERP-interpolated lip shape computed by AudioVisemeEngine
+    const shape = this.driver.currentLipShape ?? blendLipShapes((viseme) => v(`viseme_${viseme}`));
 
-      // Énfasis dinámico de cejas al ritmo del habla
-      this.speechEmphasisTimer += dt;
-      if (this.speechEmphasisTimer > 2200) {
-        this.speechEmphasisTimer = 0;
-        this.speechEmphasisValue =
-          Math.random() > 0.3 ? 0.5 + Math.random() * 0.35 : 0;
+    // Skip the repaint when nothing moved perceptibly.
+    if (
+      this.lastShape &&
+      Math.abs(shape.aperture - this.lastShape.aperture) < 0.006 &&
+      Math.abs(shape.width - this.lastShape.width) < 0.01 &&
+      Math.abs(shape.round - this.lastShape.round) < 0.02 &&
+      Math.abs(shape.protrude - this.lastShape.protrude) < 0.02 &&
+      Math.abs(shape.upperTeeth - this.lastShape.upperTeeth) < 0.03 &&
+      Math.abs(shape.tongue - this.lastShape.tongue) < 0.04 &&
+      Math.abs(shape.lipOnTeeth - this.lastShape.lipOnTeeth) < 0.02
+    ) {
+      return;
+    }
+    this.lastShape = shape;
+
+    // Canvas space: the pipeline maps the painted lip line to a constant
+    // v = 0.375 from the top of the patch, so a straight sprite follows the
+    // smile curve on the mesh automatically.
+    const W = 512;
+    const H = 256;
+    const cx = W / 2;
+    const lineY = 0.375 * H;
+    ctx.clearRect(0, 0, W, H);
+    ctx.lineJoin = "round";
+
+    const { aperture, width, round, protrude, tongue, lipOnTeeth } = shape;
+
+    // /f/ and /v/: the lips barely part, so the identifying cue has to be drawn
+    // even though aperture is tiny - upper teeth biting the lower lip.
+    if (aperture <= 0.03 && lipOnTeeth <= 0.03) {
+      tex.needsUpdate = true; // sealed: the painted lips already read correctly
+      return;
+    }
+
+    // Aperture outline. Corners sit on the painted lip line; `round` pulls them
+    // inward and `protrude` shrinks the hole to a pucker.
+    const hw = W * (0.18 + 0.22 * width) * (1 - 0.22 * protrude);
+    const up = aperture * (0.09 + 0.13 * round) * H;
+    const down = aperture * (0.34 + 0.12 * round) * H;
+    const corner = 1 - 0.55 * round; // how far the curve reaches the corners
+    const openH = up + down; // height of the aperture; drives the interior layout
+
+    const path = new Path2D();
+    path.moveTo(cx - hw, lineY);
+    path.bezierCurveTo(cx - hw * corner, lineY - up, cx + hw * corner, lineY - up, cx + hw, lineY);
+    path.bezierCurveTo(cx + hw * corner, lineY + down, cx - hw * corner, lineY + down, cx - hw, lineY);
+
+    // Lip outline FIRST, so the fills below cover its inner half and only the
+    // outer half shows. Stroking last instead ate 3px inward all the way round -
+    // on a thin aperture like /s/ (17px tall) that is a third of the opening
+    // turned black, burying the teeth and tongue and reading as an empty hole.
+    ctx.strokeStyle = "rgba(72, 27, 16, 0.92)";
+    ctx.lineWidth = 6 + 9 * protrude;
+    ctx.stroke(path);
+
+    const cavity = ctx.createLinearGradient(0, lineY - up, 0, lineY + down);
+    cavity.addColorStop(0, "#42150f");
+    cavity.addColorStop(1, "#1e0806");
+    ctx.fillStyle = cavity;
+    ctx.fill(path);
+
+    ctx.save();
+    ctx.clip(path);
+
+    // The tongue is ALWAYS there in an open mouth - what varies is how high it
+    // rises (tip at the alveolar ridge for /t/, /d/, /n/, /l/; low and flat for
+    // /a/). Gating it on a low `tongue` value left wide vowels as an empty black
+    // hole, and centring the ellipse below the cavity floor meant the clip threw
+    // nearly all of it away. Draw it as a mass rising from the floor instead.
+    const tongueTop = lineY + down - openH * (0.36 + 0.42 * tongue);
+    const tg = ctx.createLinearGradient(0, tongueTop, 0, lineY + down);
+    tg.addColorStop(0, "#c2685a");
+    tg.addColorStop(1, "#8e3b33"); // shaded where it meets the floor
+    ctx.fillStyle = tg;
+    ctx.beginPath();
+    const tongueH = lineY + down - tongueTop + 10;
+    // Radii MUST be clamped to the box: a radius larger than half the height
+    // collapses the shape. hw*0.5 is ~80px, so on a thin aperture the tongue and
+    // the teeth bands were being rounded away almost entirely.
+    const tongueR = Math.min(hw * 0.5, tongueH * 0.45);
+    ctx.roundRect(cx - hw * 0.92, tongueTop, hw * 1.84, tongueH, [tongueR, tongueR, 6, 6]);
+    ctx.fill();
+    // Centre crease, the detail that stops it reading as a flat pink slab.
+    ctx.strokeStyle = "rgba(110,40,34,0.45)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(cx, tongueTop + openH * 0.06);
+    ctx.lineTo(cx, lineY + down);
+    ctx.stroke();
+
+    // Teeth rows. Visibility differs per viseme and is a strong readability cue:
+    // /s/ shows both rows nearly meeting, /o/ and /u/ hide them almost entirely.
+    const enamel = "#f6f1e6";
+
+    // Order matters: lower teeth, then the /f/ lip tuck, then the upper teeth
+    // LAST. For /f/ and /v/ the teeth have to sit visibly ON the lower lip;
+    // painting the lip afterwards buried them and made /f/ read as a shut mouth.
+    if (shape.lowerTeeth > 0.05) {
+      const th = openH * 0.2 * shape.lowerTeeth;
+      const top = lineY + down - th;
+      const tw = hw * 1.56;
+      const grad = ctx.createLinearGradient(0, top, 0, top + th + 8);
+      grad.addColorStop(0, "#fffdf7");
+      grad.addColorStop(1, "#cdc2b1"); // shadowed towards the gum
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      const r = Math.min(9, (th + 8) * 0.4); // clamped: see the tongue note below
+      ctx.roundRect(cx - tw / 2, top, tw, th + 8, [r, r, 4, 4]);
+      ctx.fill();
+    }
+    if (lipOnTeeth > 0.05) {
+      ctx.globalAlpha = lipOnTeeth;
+      ctx.fillStyle = "#8d3a2c";
+      ctx.beginPath();
+      ctx.roundRect(cx - hw, lineY + down - openH * 0.45, hw * 2, down + 12, 12);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    if (shape.upperTeeth > 0.05) {
+      // Composition of an open mouth, as fractions of the aperture: a teeth band
+      // at the top, dark in the middle, tongue filling the bottom. Scaling this
+      // by the canvas height made a wide /a/ 73% teeth; shrinking it to a fixed
+      // 22 px swung the other way and left the mouth looking empty.
+      const th = openH * (0.14 + 0.32 * shape.upperTeeth);
+      const top = lineY - up - 6;
+      const h = th + 6;
+      const tw = hw * 1.72;
+      // A flat white rectangle reads as a blotch, not as teeth. A gum-line
+      // shadow, a brighter biting edge and faint incisor gaps make it read.
+      const grad = ctx.createLinearGradient(0, top, 0, top + h);
+      grad.addColorStop(0, "#cbbfae");
+      grad.addColorStop(0.4, enamel);
+      grad.addColorStop(1, "#fffdf7");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      const r = Math.min(11, h * 0.4); // clamped: see the tongue note above
+      ctx.roundRect(cx - tw / 2, top, tw, h, [4, 4, r, r]);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(146,128,108,0.32)";
+      ctx.lineWidth = 2;
+      for (const f of [-0.28, -0.1, 0.1, 0.28]) {
+        ctx.beginPath();
+        ctx.moveTo(cx + tw * f, top + h * 0.4);
+        ctx.lineTo(cx + tw * f, top + h);
+        ctx.stroke();
       }
-      // Decaer el énfasis suavemente
-      const decay = Math.min(1, dt / 600);
-      this.speechEmphasisValue *= 1 - decay;
-
-      targets.browInnerUp = 0.25 + this.speechEmphasisValue;
-      targets.browOuterUpLeft = 0.15 + this.speechEmphasisValue * 0.7;
-      targets.browOuterUpRight = 0.15 + this.speechEmphasisValue * 0.7;
-    } else if (this.currentState === "thinking") {
-      // Expresión reflexiva / pensando
-      targets.browInnerUp = 0.48;
-      targets.browDownLeft = 0.38;
-      targets.browDownRight = 0.2;
-      targets.eyeSquintLeft = 0.15;
-      targets.mouthSmile = 0.05;
-    } else {
-      // idle / listening: atenta, acogedora y receptiva
-      targets.mouthSmile = 0.28;
-      targets.eyeWideLeft = 0.16;
-      targets.eyeWideRight = 0.16;
-      targets.browInnerUp = 0.22;
     }
 
-    // Aplicar interpolación suave a cada blend shape facial
-    const lerpSpeed = Math.min(1, dt / 120);
-    for (const [k, targetVal] of Object.entries(targets)) {
-      const cur = this.currentFacialMorphs[k] ?? 0;
-      const next = cur + (targetVal - cur) * lerpSpeed;
-      this.currentFacialMorphs[k] = next;
-      this.applyMorph(head, k, next);
-    }
+    ctx.restore();
+
+    tex.needsUpdate = true;
   }
 
   /** One-time HeadAudio setup: worklet + model + tap the streaming audio bus. */

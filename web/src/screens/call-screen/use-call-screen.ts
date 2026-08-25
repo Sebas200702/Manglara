@@ -27,7 +27,6 @@ export function useCallScreen() {
   const thinking = useCallScreenStore((s) => s.thinking);
   const inCall = useCallScreenStore((s) => s.inCall);
   const error = useCallScreenStore((s) => s.error);
-  const notice = useCallScreenStore((s) => s.notice);
   const transcripts = useCallScreenStore((s) => s.transcripts);
   const loading = useCallScreenStore((s) => s.loading);
   const chatOpen = useCallScreenStore((s) => s.chatOpen);
@@ -39,7 +38,6 @@ export function useCallScreen() {
   const setThinking = useCallScreenStore((s) => s.setThinking);
   const setInCall = useCallScreenStore((s) => s.setInCall);
   const setError = useCallScreenStore((s) => s.setError);
-  const setNotice = useCallScreenStore((s) => s.setNotice);
   const setLoading = useCallScreenStore((s) => s.setLoading);
   const setChatOpen = useCallScreenStore((s) => s.setChatOpen);
   const setMicEnabled = useCallScreenStore((s) => s.setMicEnabled);
@@ -50,8 +48,31 @@ export function useCallScreen() {
 
   const avatarState = deriveAvatarState(connection, speaking, thinking);
 
-  // Drive gaze/mood from the call state machine. The avatar only exists during a
-  // call (it is created in startCall), so guard the call.
+  // Create and load the 3D avatar once, independent of the call lifecycle, so
+  // it renders (idle) before and after calls.
+  useEffect(() => {
+    const node = avatarContainerRef.current;
+    if (!node) return;
+
+    const controller = new AvatarController(node, {
+      onReady: () => setAvatarReady(true),
+      onSpeakingChange: (isSpeaking) => {
+        setSpeaking(isSpeaking);
+        if (isSpeaking) setThinking(false);
+      },
+      onError: (err) => console.error("[avatar]", err),
+    });
+    controllerRef.current = controller;
+    void controller.init().catch(() => {});
+
+    return () => {
+      controller.dispose();
+      controllerRef.current = null;
+      setAvatarReady(false);
+    };
+  }, [setSpeaking, setThinking]);
+
+  // Drive gaze/mood from the call state machine.
   useEffect(() => {
     controllerRef.current?.setState(avatarState);
   }, [avatarState]);
@@ -65,29 +86,8 @@ export function useCallScreen() {
 
   const startCall = async () => {
     setError(null);
-    setNotice(null);
     setLoading(true);
     clearTranscripts();
-
-    const node = avatarContainerRef.current;
-    const controller = node
-      ? new AvatarController(node, {
-          onReady: () => setAvatarReady(true),
-          onSpeakingChange: (isSpeaking) => {
-            setSpeaking(isSpeaking);
-            if (isSpeaking) setThinking(false);
-          },
-          onError: (err) => console.error("[avatar]", err),
-        })
-      : null;
-    controllerRef.current = controller;
-    // Load the 3D model now (it only exists for the duration of the call). The
-    // "Conectando con Manglaria…" overlay stays up until both the socket is open
-    // and the avatar is ready, so the character appears exactly as it lifts.
-    // If the model fails to load we still proceed with audio-only playback.
-    const initPromise = controller
-      ? controller.init().catch(() => {})
-      : Promise.resolve();
 
     const client = new VoiceClient({
       onConnectionChange: setConnection,
@@ -122,41 +122,26 @@ export function useCallScreen() {
           videoRef.current.srcObject = stream;
         }
       },
-      onReconnecting: (attempt) => {
-        setNotice({
-          text: `Conexión perdida. Reconectando… (intento ${attempt})`,
-          tone: "warn",
-        });
-      },
-      onReconnected: () => {
-        setNotice({ text: "Reconectado", tone: "success" });
-        window.setTimeout(() => {
-          const current = useCallScreenStore.getState().notice;
-          if (current?.text === "Reconectado") setNotice(null);
-        }, 3000);
-      },
     });
 
     clientRef.current = client;
 
     try {
-      // Wait for both the socket and the avatar model before lifting the
-      // "Conectando con Manglaria…" overlay.
-      await Promise.all([client.connect(), initPromise]);
+      await client.connect();
       await client.startMic();
 
       // If the avatar loaded, let TalkingHead own playback + lip-sync.
       // Otherwise fall back to VoiceClient's built-in audio playback.
-      const loaded = controllerRef.current;
+      const controller = controllerRef.current;
       console.log(
         "[avatar] startCall: controller?",
-        !!loaded,
+        !!controller,
         "isReady?",
-        loaded?.isReady
+        controller?.isReady
       );
-      if (loaded?.isReady) {
-        await loaded.startStream();
-        client.setAudioChunkSink((pcm) => loaded.feedAudio(pcm));
+      if (controller?.isReady) {
+        await controller.startStream();
+        client.setAudioChunkSink((pcm) => controller.feedAudio(pcm));
         console.log("[avatar] audio sink wired to TalkingHead");
       } else {
         console.warn(
@@ -164,15 +149,10 @@ export function useCallScreen() {
         );
       }
 
-      // Call is now live: a dropped socket from here on auto-reconnects.
-      client.markActive();
       setInCall(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Error al iniciar";
       setError(message);
-      controllerRef.current?.dispose();
-      controllerRef.current = null;
-      setAvatarReady(false);
       client.disconnect();
       clientRef.current = null;
     } finally {
@@ -184,9 +164,6 @@ export function useCallScreen() {
     clientRef.current?.disconnect();
     clientRef.current = null;
     controllerRef.current?.stopStream();
-    controllerRef.current?.dispose();
-    controllerRef.current = null;
-    setAvatarReady(false);
     resetCallState();
   };
 
@@ -210,7 +187,6 @@ export function useCallScreen() {
     connection,
     inCall,
     error,
-    notice,
     transcripts,
     loading,
     chatOpen,

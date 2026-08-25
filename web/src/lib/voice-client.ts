@@ -17,10 +17,6 @@ export interface VoiceClientCallbacks {
   onSessionReady?: () => void;
   onError?: (message: string) => void;
   onVideoStream?: (stream: MediaStream | null) => void;
-  /** The live connection dropped; an automatic reconnection attempt is starting. */
-  onReconnecting?: (attempt: number) => void;
-  /** The connection was successfully restored after a drop. */
-  onReconnected?: () => void;
 }
 
 function workletBlobUrl(): string {
@@ -163,26 +159,6 @@ export class VoiceClient {
   private callbacks: VoiceClientCallbacks;
   private audioChunkSink: ((pcm: ArrayBuffer) => void) | null = null;
 
-  /**
-   * True while a call is live (started and not yet hung up). Gates auto-reconnect:
-   * an unexpected drop only auto-reconnects while the call is supposed to be up,
-   * so a failed *initial* connect surfaces as an error instead of a reconnect loop.
-   */
-  private active = false;
-  /** Set by `disconnect()` so the resulting `onclose` is not treated as a drop. */
-  private intentionalClose = false;
-  /** A reconnect attempt is scheduled/in flight. */
-  private reconnecting = false;
-  private reconnectAttempts = 0;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Give up after this many attempts; the user must re-initiate then. */
-  private readonly maxReconnectAttempts = 6;
-  /** Exponential backoff base, ms. */
-  private readonly reconnectBaseMs = 1000;
-  private readonly reconnectMaxDelayMs = 15000;
-  /** Clears the "Reconectado" notice after a moment. */
-  private reconnectedNoticeTimer: ReturnType<typeof setTimeout> | null = null;
-
   constructor(callbacks: VoiceClientCallbacks = {}) {
     this.callbacks = callbacks;
   }
@@ -201,24 +177,12 @@ export class VoiceClient {
     return this.ws?.readyState === WebSocket.OPEN;
   }
 
-  /**
-   * Flag the call as live once it is fully up. Until this is set, an unexpected
-   * close is treated as a failed *initial* connect (an error), not a drop that
-   * should auto-reconnect. `disconnect()` clears it again.
-   */
-  markActive(): void {
-    this.active = true;
-  }
-
   getVideoCanvas(): HTMLCanvasElement | null {
     return this.canvas;
   }
 
   async connect(): Promise<void> {
     if (this.ws?.readyState === WebSocket.OPEN) return;
-
-    // A fresh connect is never an intentional close until disconnect() says so.
-    this.intentionalClose = false;
 
     this.callbacks.onConnectionChange?.("connecting");
 
@@ -252,53 +216,9 @@ export class VoiceClient {
 
       ws.onclose = () => {
         this.ws = null;
-        if (this.intentionalClose) {
-          this.callbacks.onConnectionChange?.("disconnected");
-          return;
-        }
-        // Unexpected drop. Stay in the call and try to restore the link.
         this.callbacks.onConnectionChange?.("disconnected");
-        if (this.active) this.scheduleReconnect();
       };
     });
-  }
-
-  /**
-   * Re-open the socket and resume the media pipelines after an unexpected drop.
-   * The mic/video worklets already read `this.ws` dynamically, so once a new
-   * socket is OPEN they resume sending with no further wiring.
-   */
-  private async reconnect(): Promise<void> {
-    try {
-      await this.connect();
-      await this.startMic();
-      this.reconnecting = false;
-      this.reconnectAttempts = 0;
-      this.callbacks.onReconnected?.();
-    } catch {
-      // The failed `connect()` already fired `onclose`, which scheduled the next
-      // attempt via scheduleReconnect() (while `active` holds). Nothing to do here.
-    }
-  }
-
-  /** Queue the next reconnection attempt with exponential backoff. Idempotent. */
-  private scheduleReconnect(): void {
-    if (this.reconnecting || this.reconnectTimer) return;
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.callbacks.onError?.("No se pudo restablecer la conexión");
-      return;
-    }
-    this.reconnecting = true;
-    this.reconnectAttempts += 1;
-    this.callbacks.onReconnecting?.(this.reconnectAttempts);
-    const delay = Math.min(
-      this.reconnectBaseMs * 2 ** (this.reconnectAttempts - 1),
-      this.reconnectMaxDelayMs
-    );
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      void this.reconnect();
-    }, delay);
   }
 
   private handleMessage(msg: ServerToClientMessage): void {
@@ -341,14 +261,6 @@ export class VoiceClient {
   async startMic(): Promise<void> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("Not connected");
-    }
-
-    // Already initialised (e.g. after a reconnect): just make sure the audio
-    // contexts are running again and resume the existing pipelines.
-    if (this.micStream) {
-      await this.playbackCtx?.resume().catch(() => {});
-      await this.micCtx?.resume().catch(() => {});
-      return;
     }
 
     this.micCtx = new AudioContext({ sampleRate: 16000 });
@@ -586,19 +498,6 @@ export class VoiceClient {
   }
 
   disconnect(): void {
-    // Any close from here on is intentional: don't auto-reconnect.
-    this.intentionalClose = true;
-    this.active = false;
-    this.reconnecting = false;
-    this.reconnectAttempts = 0;
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    if (this.reconnectedNoticeTimer) {
-      clearTimeout(this.reconnectedNoticeTimer);
-      this.reconnectedNoticeTimer = null;
-    }
     this.playbackQueue?.stop();
     this.stopVideoCapture();
     this.frameWorker?.terminate();

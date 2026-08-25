@@ -11,7 +11,7 @@ export function TranscriptPanel({ entries }: TranscriptPanelProps) {
       <div className="flex-1 overflow-y-auto px-3 py-3">
         {entries.length === 0 ? (
           <p className="px-1 py-8 text-center text-xs text-neutral-500 leading-relaxed font-medium">
-            La transcripción aparecerá aquí cuando empieces a hablar con Manglaria.
+            La transcripción aparecerá aquí cuando empieces a hablar con Manglara.
           </p>
         ) : (
           <div className="flex flex-col gap-3">
@@ -29,7 +29,7 @@ export function TranscriptPanel({ entries }: TranscriptPanelProps) {
                     entry.role === "user" ? "text-accent-600" : "text-brand-600"
                   }`}
                 >
-                  {entry.role === "user" ? "Tú" : "Manglaria"}
+                  {entry.role === "user" ? "Tú" : "Manglara"}
                 </span>
                 <p className="text-xs leading-relaxed font-medium">{entry.text}</p>
               </div>

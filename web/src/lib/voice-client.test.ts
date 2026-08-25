@@ -66,10 +66,10 @@ describe("VoiceClient automatic reconnection", () => {
     // Reconnection can reuse the already-open media pipeline.
     Object.assign(client, { micStream: { getTracks: () => [] } });
     FakeWebSocket.instances[0]!.close();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
     FakeWebSocket.instances[1]!.fail();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(FakeWebSocket.instances).toHaveLength(3);
 
     FakeWebSocket.instances[2]!.open();

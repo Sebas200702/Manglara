@@ -105,49 +105,6 @@ export function CallScreen() {
               />
             </div>
 
-            {/* Explanatory panel shown in the lobby, before the call starts.
-                Replaces the old video backdrop with descriptive text about the
-                interaction. */}
-            {!inCall && !loading && (
-              <div className="absolute inset-0 z-0 flex items-center justify-center p-6 sm:p-10">
-                <div className="max-w-md text-center">
-                  <h2 className="text-2xl font-black uppercase tracking-wide text-brand-700 sm:text-3xl">
-                    Habla con Manglara
-                  </h2>
-                  <p className="mt-4 text-sm leading-relaxed text-neutral-600 sm:text-base">
-                    Manglara es la asistente virtual de{" "}
-                    <strong className="text-brand-700">Habilidades Verdes Ya</strong>.
-                    Pregúntale lo que quieras sobre el Currículo
-                    Verde, los stands interactivos del lanzamiento y el material didáctico.
-                  </p>
-                  <p className="mt-3 text-sm leading-relaxed text-neutral-600 sm:text-base">
-                    Activa el <strong className="text-neutral-800">micrófono</strong> para
-                    hablar con ella y la <strong className="text-neutral-800">cámara</strong> si
-                    quieres que te vea. Te responde con voz y gestos en tiempo real.
-                  </p>
-                  <p className="mt-4 text-xs font-bold uppercase tracking-widest text-brand-500">
-                    Pulsa “Llamar” para comenzar
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Intermediate "connecting" screen: shown only while the call is
-                being established, before the character appears. */}
-            {loading && !inCall && (
-              <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-6 bg-[#f7f9ec]/95 backdrop-blur-sm">
-                <div className="size-16 animate-spin rounded-full border-4 border-brand-200 border-t-brand-500" />
-                <div className="text-center">
-                  <p className="text-lg font-black uppercase tracking-widest text-brand-700">
-                    Conectando con Manglara
-                  </p>
-                  <p className="mt-1 text-xs font-semibold text-neutral-500">
-                    Estamos preparando tu llamada virtual…
-                  </p>
-                </div>
-              </div>
-            )}
-
             {/* Assistant floating label */}
             <div className="absolute top-4 left-4 rounded-xl bg-navy-600/90 backdrop-blur-md px-3.5 py-1.5 text-xs font-extrabold text-white border border-navy-500/20 shadow-lg tracking-wide uppercase z-20">
               Manglara
@@ -181,7 +138,7 @@ export function CallScreen() {
           {/* Floating controls dock overlay (aligned to bottom) */}
           <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-3 w-full max-w-sm sm:max-w-md px-4 z-20">
             {error && (
-              <p className="text-center text-xs text-white bg-status-error px-4 py-2 rounded-xl shadow-lg border border-status-error/20 font-bold animate-bounce">
+              <p className="text-center text-xs text-white bg-status-error px-4 py-2 rounded-xl shadow-lg border border-status-error/20 font-bold animate-pulse">
                 {error}
               </p>
             )}
@@ -267,7 +224,7 @@ export function CallScreen() {
                   disabled={loading}
                   className="flex h-11 items-center gap-2 rounded-full bg-brand-500 hover:bg-brand-600 px-5 text-xs font-black text-white transition-all cursor-pointer hover:scale-105 active:scale-95 shadow-md shadow-brand-500/25 tracking-wide uppercase disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  <Phone className="size-4 shrink-0 animate-bounce" />
+                  <Phone className="size-4 shrink-0 animate-pulse" />
                   <span>{loading ? "Conectando…" : "Llamar"}</span>
                 </button>
               ) : (

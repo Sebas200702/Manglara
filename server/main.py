@@ -42,38 +42,6 @@ RAG_DEBOUNCE_S = 0.3  # for shorter partials, wait for a pause in the stream
 HEARTBEAT_INTERVAL_S = 20
 CLIENT_IDLE_TIMEOUT_S = 90
 
-# Gemini resumption handles, kept across browser reconnects and keyed by the
-# call id the client sends as `?session=`.
-#
-# Every WebSocket builds its own GeminiLiveClient, so without this a reconnected
-# browser started a brand-new conversation - Manglara would introduce herself
-# again and have forgotten everything said so far. Holding the last handle lets
-# the new socket rejoin the same conversation instead.
-#
-# In-process and single-instance, like the active-documents set: good enough for
-# a kiosk, and it only ever costs a lost history if the backend restarts.
-RESUMPTION_TTL_S = 900
-_resumption_handles: dict[str, tuple[str, float]] = {}
-
-
-def _prune_resumption_handles(now: float) -> None:
-    stale = [k for k, (_, at) in _resumption_handles.items() if now - at > RESUMPTION_TTL_S]
-    for key in stale:
-        _resumption_handles.pop(key, None)
-
-
-def remember_resumption_handle(call_id: str, handle: str) -> None:
-    now = asyncio.get_running_loop().time()
-    _prune_resumption_handles(now)
-    _resumption_handles[call_id] = (handle, now)
-
-
-def recall_resumption_handle(call_id: str) -> str | None:
-    now = asyncio.get_running_loop().time()
-    _prune_resumption_handles(now)
-    entry = _resumption_handles.get(call_id)
-    return entry[0] if entry else None
-
 async def activate_ready_documents():
     # Active docs live in memory, so every restart must re-activate them;
     # otherwise sessions run without any knowledge source.
@@ -147,24 +115,8 @@ async def ws_voice(ws: WebSocket):
         logger.warning(f"[ws] knowledge preload failed: {e}")
         knowledge = ""
 
-    # Same id across a call's reconnects, so we can rejoin its conversation.
-    call_id = ws.query_params.get("session")
-    resume_from = recall_resumption_handle(call_id) if call_id else None
-    if resume_from:
-        logger.info("[ws] resuming conversation for call %s", call_id)
-
-    if call_id:
-
-        async def on_resumption_handle(handle: str):
-            remember_resumption_handle(call_id, handle)
-
-        gemini.on_resumption_handle = on_resumption_handle
-
     try:
-        await gemini.connect(
-            system_prompt=build_system_prompt(knowledge),
-            resumption_handle=resume_from,
-        )
+        await gemini.connect(system_prompt=build_system_prompt(knowledge))
     except Exception as e:
         logger.error(f"[ws] Gemini connect failed: {e}")
         await ws.send_json({"type": "error", "message": str(e)})

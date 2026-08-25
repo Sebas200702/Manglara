@@ -15,34 +15,8 @@ logger = logging.getLogger(__name__)
 # being streamed, which is our case). Compression turns that hard stop into a
 # sliding window instead, so a session can run indefinitely - the single biggest
 # cause of a call "disconnecting" for no visible reason.
-#
-# The thresholds are DERIVED from the actual system instruction rather than
-# fixed, and that matters more than it looks. Ours carries the whole knowledge
-# preload (~55 k chars, ~15 k tokens) and grows whenever a cartilla is added. A
-# fixed `target_tokens` below that size is catastrophic: the window keeps only a
-# suffix, so every compression discarded the entire conversation and Manglara
-# greeted the user again on each question, having forgotten everything.
-#
-# So: always keep the instruction plus a real conversation tail, and only
-# compress once a healthy amount has accumulated on top. RAG injects retrieved
-# cartilla text as a turn on nearly every turn, so the transcript grows by a
-# couple of thousand tokens per exchange - the tail has to be generous.
-#
-# Spanish runs around 3.5 chars/token on Gemini's tokenizer. The estimate only
-# has to be in the right ballpark, since both thresholds add wide margins on top.
-CHARS_PER_TOKEN = 3.5
-# Conversation the sliding window must never cut away.
-CONVERSATION_KEEP_TOKENS = 12000
-# How much may pile up beyond that before compression runs. Kept moderate so
-# the total stays far inside the model's context window.
-COMPRESSION_HEADROOM_TOKENS = 8000
-
-
-def _compression_thresholds(system_prompt: str) -> tuple[int, int]:
-    """(trigger_tokens, target_tokens) sized to fit this system instruction."""
-    system_tokens = int(len(system_prompt) / CHARS_PER_TOKEN)
-    target = system_tokens + CONVERSATION_KEEP_TOKENS
-    return target + COMPRESSION_HEADROOM_TOKENS, target
+CONTEXT_TRIGGER_TOKENS = 24000
+CONTEXT_TARGET_TOKENS = 12000
 
 # Bounds on transparently re-opening the upstream Gemini session. Generous
 # enough to ride out a proxy blip or a server-side rotation; finite so a bad API
@@ -69,10 +43,6 @@ class GeminiLiveClient:
         # tell the browser what is happening instead of going silent.
         self.on_upstream_reconnecting: Callable[[int], Any] | None = None
         self.on_upstream_reconnected: Callable[[], Any] | None = None
-        # Fired whenever Gemini hands out a new resumption checkpoint, so the
-        # caller can keep it beyond the life of this object - that is what lets
-        # a *browser* reconnect rejoin the same conversation.
-        self.on_resumption_handle: Callable[[str], Any] | None = None
         self._user_text_buffer = ""
         self._receiving_output = False
         self._system_prompt: str | None = None
@@ -85,8 +55,6 @@ class GeminiLiveClient:
         self._closed = False
 
     def _build_config(self) -> dict:
-        prompt = self._system_prompt or SYSTEM_PROMPT
-        trigger_tokens, target_tokens = _compression_thresholds(prompt)
         config: dict = {
             "response_modalities": ["AUDIO"],
             "input_audio_transcription": {},
@@ -98,10 +66,14 @@ class GeminiLiveClient:
                     }
                 }
             },
-            "system_instruction": {"parts": [{"text": prompt}]},
+            "system_instruction": {
+                "parts": [{"text": self._system_prompt or SYSTEM_PROMPT}]
+            },
             "context_window_compression": types.ContextWindowCompressionConfig(
-                trigger_tokens=trigger_tokens,
-                sliding_window=types.SlidingWindow(target_tokens=target_tokens),
+                trigger_tokens=CONTEXT_TRIGGER_TOKENS,
+                sliding_window=types.SlidingWindow(
+                    target_tokens=CONTEXT_TARGET_TOKENS
+                ),
             ),
             # Asking for resumption is what makes the server emit the handles
             # above; on a fresh connect `handle` is None, which just means
@@ -118,37 +90,11 @@ class GeminiLiveClient:
         )
         self.session = await self._ctx.__aenter__()
 
-    async def connect(
-        self, system_prompt: str | None = None, resumption_handle: str | None = None
-    ):
-        """
-        Open a live session.
-
-        `resumption_handle` rejoins an earlier conversation instead of starting a
-        new one. Passing it is what keeps Manglara's memory across a browser
-        reconnect: each WebSocket gets a fresh client object, so without the
-        handle every dropped socket silently began a brand-new conversation and
-        she introduced herself again.
-        """
+    async def connect(self, system_prompt: str | None = None):
         self._closed = False
         self._system_prompt = system_prompt or SYSTEM_PROMPT
-        self._resumption_handle = resumption_handle
-        try:
-            await self._open()
-        except Exception:
-            if not resumption_handle:
-                raise
-            # A handle expires, and it is rejected outright when the previous
-            # session was mid-generation. Losing the history is much better than
-            # failing the call.
-            logger.warning("[gemini] resumption handle rejected, starting fresh")
-            await self._discard_session()
-            self._resumption_handle = None
-            await self._open()
-        logger.info(
-            "[gemini] session opened (%s)",
-            "resumed" if resumption_handle else "new conversation",
-        )
+        await self._open()
+        logger.info("[gemini] session opened")
 
     async def _discard_session(self):
         """Tear down the current socket, ignoring errors - it is already broken."""
@@ -192,13 +138,9 @@ class GeminiLiveClient:
             except Exception as e:
                 logger.warning("[gemini] resume attempt %d failed: %s", attempt, e)
                 await self._discard_session()
-                # Give the handle a second chance before writing the
-                # conversation off: the first failure is usually the same
-                # network blip that killed the session, not a rejected handle.
-                # Dropping it immediately meant a one-second hiccup cost
-                # Manglara her whole memory of the conversation.
-                if attempt >= 2:
-                    self._resumption_handle = None
+                # A stale handle is the likeliest culprit; drop it so the next
+                # attempt starts a clean session rather than retrying a reject.
+                self._resumption_handle = None
                 delay = min(
                     RESUME_BASE_DELAY_S * 2 ** (attempt - 1), RESUME_MAX_DELAY_S
                 )
@@ -296,8 +238,6 @@ class GeminiLiveClient:
             if update and getattr(update, "resumable", False):
                 if getattr(update, "new_handle", None):
                     self._resumption_handle = update.new_handle
-                    if self.on_resumption_handle:
-                        await self.on_resumption_handle(update.new_handle)
 
             # "I am about to hang up on you." Nothing to do but note it: the
             # stream ends right after and `receive_loop` reconnects with the

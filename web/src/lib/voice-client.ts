@@ -118,22 +118,8 @@ function backendWsOrigin(): string {
   return `${pageProto}//${configured.replace(/^\/+/, "").replace(/\/+$/, "")}`;
 }
 
-/**
- * Call id, carried on every socket of a single call - including the ones opened
- * by a reconnect. The backend keys Gemini's resumption handle on it, so a
- * reconnected socket rejoins the same conversation rather than starting a new
- * one. Without it Manglara re-introduced herself after every blip, having
- * forgotten everything said before.
- */
-function newCallId(): string {
-  const uuid = globalThis.crypto?.randomUUID?.();
-  if (uuid) return uuid;
-  return `call-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function wsUrl(callId: string | null, path = "/ws/voice"): string {
-  const query = callId ? `?session=${encodeURIComponent(callId)}` : "";
-  return `${backendWsOrigin()}${path}${query}`;
+function wsUrl(path = "/ws/voice"): string {
+  return `${backendWsOrigin()}${path}`;
 }
 
 const VIDEO_FRAME_INTERVAL_MS = 1500;
@@ -219,8 +205,6 @@ export class VoiceClient {
   private lastServerMessageAt = 0;
   /** Bound listeners for network/wake events, kept so they can be removed. */
   private wakeListener: (() => void) | null = null;
-  /** Stable for the whole call; see `newCallId`. Reset by `disconnect()`. */
-  private callId: string | null = null;
 
   constructor(callbacks: VoiceClientCallbacks = {}) {
     this.callbacks = callbacks;
@@ -360,11 +344,9 @@ export class VoiceClient {
 
     this.callbacks.onConnectionChange?.("connecting");
     this.installWakeListeners();
-    // Minted once per call, kept across reconnects.
-    this.callId ??= newCallId();
 
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(wsUrl(this.callId));
+      const ws = new WebSocket(wsUrl());
       // Guards the promise: after the socket opens, a later error must not
       // reject (already settled) nor be reported as a failed connect - it is a
       // mid-call drop, which `onclose` handles by reconnecting silently.
@@ -805,9 +787,6 @@ export class VoiceClient {
     }
     this.stopHeartbeat();
     this.removeWakeListeners();
-    // Hanging up ends the conversation: the next call must start fresh, with
-    // Manglara introducing herself again.
-    this.callId = null;
     this.playbackQueue?.stop();
     this.stopVideoCapture();
     this.frameWorker?.terminate();

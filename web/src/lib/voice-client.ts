@@ -138,23 +138,6 @@ const VIDEO_FRAME_HEIGHT = 480;
  */
 const MIC_REOPEN_GUARD_MS = 500;
 
-/**
- * Heartbeat. `ws.onclose` is not a reliable drop detector: when a laptop sleeps,
- * wifi switches, or a proxy silently reaps an idle tunnel, the socket goes
- * half-open and no close frame ever arrives - `readyState` stays OPEN on a
- * connection where nothing can get through. Pinging on an interval and treating
- * a long silence as a drop is the only way to notice.
- *
- * The window is deliberately much larger than the interval: the server pings
- * every 20 s and answers ours, so several exchanges must be missed before we
- * declare the socket dead.
- */
-const HEARTBEAT_INTERVAL_MS = 10000;
-const HEARTBEAT_TIMEOUT_MS = 45000;
-
-/** A socket stuck in CONNECTING may never fire `onerror`; bound the wait. */
-const CONNECT_TIMEOUT_MS = 15000;
-
 export class VoiceClient {
   private ws: WebSocket | null = null;
   private micCtx: AudioContext | null = null;
@@ -192,121 +175,16 @@ export class VoiceClient {
   private reconnecting = false;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Give up after this many attempts; the user must re-initiate then. */
+  private readonly maxReconnectAttempts = 6;
   /** Exponential backoff base, ms. */
   private readonly reconnectBaseMs = 1000;
   private readonly reconnectMaxDelayMs = 15000;
   /** Clears the "Reconectado" notice after a moment. */
   private reconnectedNoticeTimer: ReturnType<typeof setTimeout> | null = null;
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  /** Instance-level so tests can shrink them; see the constants above. */
-  private readonly heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
-  private readonly heartbeatTimeoutMs = HEARTBEAT_TIMEOUT_MS;
-  /** Timestamp of the last frame from the server; drives the watchdog. */
-  private lastServerMessageAt = 0;
-  /** Bound listeners for network/wake events, kept so they can be removed. */
-  private wakeListener: (() => void) | null = null;
 
   constructor(callbacks: VoiceClientCallbacks = {}) {
     this.callbacks = callbacks;
-  }
-
-  /**
-   * Coming back from sleep or a network switch, the browser fires `online` /
-   * `visibilitychange` long before a backoff timer would have elapsed - and the
-   * old socket is usually half-open, so nothing else will notice at all. Retry
-   * at once on those events instead of waiting out the delay.
-   */
-  private installWakeListeners(): void {
-    if (this.wakeListener || typeof window === "undefined") return;
-    if (typeof window.addEventListener !== "function") return;
-    const onWake = () => {
-      if (!this.active || this.intentionalClose) return;
-      if (typeof document !== "undefined" && document.hidden) return;
-      if (this.isConnected) {
-        // Might be a zombie: force the heartbeat check rather than trusting
-        // `readyState`, which stays OPEN on a half-open socket.
-        this.checkHeartbeat();
-        return;
-      }
-      // Skip the remaining backoff and try now.
-      if (this.reconnectTimer) {
-        clearTimeout(this.reconnectTimer);
-        this.reconnectTimer = null;
-        this.reconnecting = false;
-      }
-      if (!this.reconnecting) this.scheduleReconnect(0);
-    };
-    this.wakeListener = onWake;
-    window.addEventListener("online", onWake);
-    window.addEventListener("focus", onWake);
-    if (typeof document !== "undefined" && document.addEventListener) {
-      document.addEventListener("visibilitychange", onWake);
-    }
-  }
-
-  private removeWakeListeners(): void {
-    const onWake = this.wakeListener;
-    if (!onWake || typeof window === "undefined") return;
-    if (typeof window.removeEventListener === "function") {
-      window.removeEventListener("online", onWake);
-      window.removeEventListener("focus", onWake);
-    }
-    if (typeof document !== "undefined" && document.removeEventListener) {
-      document.removeEventListener("visibilitychange", onWake);
-    }
-    this.wakeListener = null;
-  }
-
-  private startHeartbeat(): void {
-    this.stopHeartbeat();
-    this.lastServerMessageAt = Date.now();
-    this.heartbeatTimer = setInterval(() => {
-      const ws = this.ws;
-      if (ws?.readyState === WebSocket.OPEN) {
-        try {
-          ws.send(JSON.stringify({ type: "ping" } satisfies ClientToServerMessage));
-        } catch {
-          // A send that throws on an OPEN socket means it is already dead.
-        }
-      }
-      this.checkHeartbeat();
-    }, this.heartbeatIntervalMs);
-  }
-
-  private stopHeartbeat(): void {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
-    }
-  }
-
-  /**
-   * Declare a silent socket dead. `close()` synthesises the `onclose` that a
-   * half-open connection never delivers, which is what kicks off the reconnect.
-   */
-  private checkHeartbeat(): void {
-    if (!this.active || this.intentionalClose) return;
-    if (Date.now() - this.lastServerMessageAt < this.heartbeatTimeoutMs) return;
-    const ws = this.ws;
-    if (!ws) {
-      if (!this.reconnecting) this.scheduleReconnect();
-      return;
-    }
-    console.warn("[voice] sin respuesta del servidor, reiniciando la conexión");
-    this.ws = null;
-    // Detach first: this close is ours, and the handler would otherwise treat
-    // it as an unexpected drop *and* race with the reconnect we start here.
-    ws.onopen = null;
-    ws.onmessage = null;
-    ws.onerror = null;
-    ws.onclose = null;
-    try {
-      ws.close();
-    } catch {
-      // already closing
-    }
-    this.callbacks.onConnectionChange?.("connecting");
-    if (!this.reconnecting) this.scheduleReconnect(0);
   }
 
   /**
@@ -343,49 +221,19 @@ export class VoiceClient {
     this.intentionalClose = false;
 
     this.callbacks.onConnectionChange?.("connecting");
-    this.installWakeListeners();
 
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(wsUrl());
-      // Guards the promise: after the socket opens, a later error must not
-      // reject (already settled) nor be reported as a failed connect - it is a
-      // mid-call drop, which `onclose` handles by reconnecting silently.
-      let settled = false;
-
-      const timeout = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        try {
-          ws.close();
-        } catch {
-          // nothing to do
-        }
-        reject(new Error("WebSocket connection timed out"));
-      }, CONNECT_TIMEOUT_MS);
 
       ws.onopen = () => {
-        clearTimeout(timeout);
         this.ws = ws;
-        this.startHeartbeat();
         this.callbacks.onConnectionChange?.("connected");
-        if (!settled) {
-          settled = true;
-          resolve();
-        }
+        resolve();
       };
 
       ws.onmessage = (event) => {
-        // Any frame is proof of life, whatever it carries.
-        this.lastServerMessageAt = Date.now();
         try {
           const msg = JSON.parse(event.data as string) as ServerToClientMessage;
-          if (msg.type === "ping") {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: "pong" } satisfies ClientToServerMessage));
-            }
-            return;
-          }
-          if (msg.type === "pong") return;
           // Deliberately NOT logged per message: audio arrives continuously and a
           // console.log per chunk is itself a main-thread stall (worse with DevTools
           // open), which hitches the avatar's render loop. Use `__lipsyncLog()` for
@@ -397,36 +245,20 @@ export class VoiceClient {
       };
 
       ws.onerror = () => {
-        if (settled) return; // mid-call drop; onclose reconnects quietly
-        settled = true;
-        clearTimeout(timeout);
         this.callbacks.onConnectionChange?.("error");
+        this.callbacks.onError?.("WebSocket connection failed");
         reject(new Error("WebSocket connection failed"));
       };
 
       ws.onclose = () => {
-        clearTimeout(timeout);
-        if (this.ws === ws) this.ws = null;
+        this.ws = null;
         if (this.intentionalClose) {
-          this.stopHeartbeat();
           this.callbacks.onConnectionChange?.("disconnected");
           return;
         }
-        if (this.active) {
-          // Unexpected drop mid-call. Report "connecting", not "disconnected":
-          // the call is still up as far as the user is concerned, and the state
-          // feeds the avatar's mood - flashing to idle on every blip is worse
-          // than showing a reconnect in progress.
-          this.callbacks.onConnectionChange?.("connecting");
-          this.scheduleReconnect();
-        } else {
-          this.stopHeartbeat();
-          this.callbacks.onConnectionChange?.("disconnected");
-        }
-        if (!settled) {
-          settled = true;
-          reject(new Error("WebSocket closed before opening"));
-        }
+        // Unexpected drop. Stay in the call and try to restore the link.
+        this.callbacks.onConnectionChange?.("disconnected");
+        if (this.active) this.scheduleReconnect();
       };
     });
   }
@@ -437,10 +269,6 @@ export class VoiceClient {
    * socket is OPEN they resume sending with no further wiring.
    */
   private async reconnect(): Promise<void> {
-    if (!this.active || this.intentionalClose) {
-      this.reconnecting = false;
-      return;
-    }
     try {
       await this.connect();
       await this.startMic();
@@ -456,29 +284,20 @@ export class VoiceClient {
     }
   }
 
-  /**
-   * Queue the next reconnection attempt with exponential backoff. Idempotent.
-   *
-   * There is deliberately no attempt cap: the call is only ever given up on by
-   * `disconnect()`. A cap meant a long tunnel ride or an overnight laptop sleep
-   * left the kiosk permanently dead with no way back short of a page reload.
-   * The delay is capped instead, so a long outage costs one retry every
-   * `reconnectMaxDelayMs` and heals the moment the network returns.
-   */
-  private scheduleReconnect(delayOverrideMs?: number): void {
+  /** Queue the next reconnection attempt with exponential backoff. Idempotent. */
+  private scheduleReconnect(): void {
     if (this.reconnecting || this.reconnectTimer) return;
-    if (!this.active || this.intentionalClose) return;
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      this.callbacks.onError?.("No se pudo restablecer la conexión");
+      return;
+    }
     this.reconnecting = true;
     this.reconnectAttempts += 1;
     this.callbacks.onReconnecting?.(this.reconnectAttempts);
-    const backoff = Math.min(
+    const delay = Math.min(
       this.reconnectBaseMs * 2 ** (this.reconnectAttempts - 1),
       this.reconnectMaxDelayMs
     );
-    // Jitter keeps a roomful of kiosks from retrying in lockstep after a
-    // backend restart and knocking it straight back over.
-    const delay =
-      delayOverrideMs ?? backoff + Math.random() * Math.min(backoff, 1000);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       void this.reconnect();
@@ -532,7 +351,6 @@ export class VoiceClient {
     if (this.micStream) {
       await this.playbackCtx?.resume().catch(() => {});
       await this.micCtx?.resume().catch(() => {});
-      this.active = true;
       return;
     }
 
@@ -585,7 +403,6 @@ export class VoiceClient {
     };
 
     this.startVideo(stream);
-    this.active = true;
     console.log("[voice] mic started, sending audio chunks to server");
   }
 
@@ -785,8 +602,6 @@ export class VoiceClient {
       clearTimeout(this.reconnectedNoticeTimer);
       this.reconnectedNoticeTimer = null;
     }
-    this.stopHeartbeat();
-    this.removeWakeListeners();
     this.playbackQueue?.stop();
     this.stopVideoCapture();
     this.frameWorker?.terminate();

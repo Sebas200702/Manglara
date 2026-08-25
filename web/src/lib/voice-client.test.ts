@@ -15,7 +15,10 @@ class FakeWebSocket {
   onerror: SocketHandler = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
 
-  constructor() {
+  readonly url: string;
+
+  constructor(url: string) {
+    this.url = url;
     FakeWebSocket.instances.push(this);
   }
 
@@ -196,17 +199,60 @@ describe("VoiceClient heartbeat", () => {
   });
 
   test("traffic from the server keeps the socket alive", async () => {
-    const client = makeClient({}, { heartbeatIntervalMs: 5, heartbeatTimeoutMs: 40 });
+    // Runs 5x longer than the timeout, so a socket left unanswered would
+    // certainly be reaped - while each reply lands well inside it, with enough
+    // slack that a slow box overshooting a 20 ms timer is not a false positive.
+    const client = makeClient({}, { heartbeatIntervalMs: 5, heartbeatTimeoutMs: 100 });
     const socket = await startLiveCall(client);
 
     // Answer every ping, as a healthy server would.
-    for (let i = 0; i < 8; i += 1) {
-      await tick(10);
+    for (let i = 0; i < 25; i += 1) {
+      await tick(20);
       socket.receive({ type: "pong" });
     }
 
     expect(FakeWebSocket.instances).toHaveLength(1);
     expect(client.isConnected).toBe(true);
+    client.disconnect();
+  });
+});
+
+describe("VoiceClient conversation continuity", () => {
+  function callIdOf(socket: FakeWebSocket): string | null {
+    return new URL(socket.url.replace(/^ws/, "http")).searchParams.get("session");
+  }
+
+  test("keeps one call id across reconnects so the conversation resumes", async () => {
+    const client = makeClient();
+    const first = await startLiveCall(client);
+    const callId = callIdOf(first);
+    expect(callId).toBeTruthy();
+
+    first.close();
+    await tick();
+    const replacement = FakeWebSocket.instances[1]!;
+    replacement.open();
+    await tick();
+
+    // Same id => the backend hands the new socket the previous conversation's
+    // resumption handle instead of starting Manglara over.
+    expect(callIdOf(replacement)).toBe(callId);
+    client.disconnect();
+  });
+
+  test("a new call after hanging up gets a fresh id", async () => {
+    const client = makeClient();
+    const first = await startLiveCall(client);
+    const firstId = callIdOf(first);
+    client.disconnect();
+
+    const connecting = client.connect();
+    const second = FakeWebSocket.instances.at(-1)!;
+    second.open();
+    await connecting;
+
+    expect(callIdOf(second)).toBeTruthy();
+    expect(callIdOf(second)).not.toBe(firstId);
     client.disconnect();
   });
 });

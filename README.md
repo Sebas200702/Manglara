@@ -1,4 +1,4 @@
-# Manglara
+# Manglara .
 
 Llamada virtual con voz en tiempo real (Gemini Live) y avatar con estados visuales.
 

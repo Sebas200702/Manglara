@@ -6,7 +6,6 @@ import {
   PhoneOff,
   Video,
   VideoOff,
-  Info,
 } from "lucide-react";
 import { Avatar } from "../../components/avatar";
 import { TranscriptPanel } from "../../components/transcript-panel";
@@ -26,11 +25,11 @@ export function CallScreen() {
   const {
     videoRef,
     avatarContainerRef,
-    avatarReady,
     avatarState,
     connection,
     inCall,
     error,
+    notice,
     transcripts,
     loading,
     chatOpen,
@@ -90,17 +89,64 @@ export function CallScreen() {
         <main className={`relative flex flex-col p-4 flex-1 ${chatOpen ? "col-span-1" : "col-span-2"}`}>
           <div className="relative flex-1 overflow-hidden rounded-3xl bg-linear-to-b from-[#f7f9ec] via-[#dde8b7]/40 to-[#ccd63c]/15 border border-brand-200/60 shadow-inner">
 
-            {/* Mangrove environment backdrop (looping video + ambient sound) */}
-            <MangroveVideo ambient={inCall} ducked={avatarState === "speaking"} />
+            {/* Mangrove environment backdrop (looping video + ambient sound).
+                The video shows only during the call, behind the avatar. */}
+            <MangroveVideo
+              showVideo={inCall}
+              ambient={inCall}
+              ducked={avatarState === "speaking"}
+            />
 
             {/* Avatar 3D Component */}
             <div className="size-full z-10 relative">
               <Avatar
                 state={avatarState}
                 containerRef={avatarContainerRef}
-                ready={avatarReady}
               />
             </div>
+
+            {/* Explanatory panel shown in the lobby, before the call starts.
+                Replaces the old video backdrop with descriptive text about the
+                interaction. */}
+            {!inCall && !loading && (
+              <div className="absolute inset-0 z-0 flex items-center justify-center p-6 sm:p-10">
+                <div className="max-w-md text-center">
+                  <h2 className="text-2xl font-black uppercase tracking-wide text-brand-700 sm:text-3xl">
+                    Habla con Manglara
+                  </h2>
+                  <p className="mt-4 text-sm leading-relaxed text-neutral-600 sm:text-base">
+                    Manglara es la asistente virtual de{" "}
+                    <strong className="text-brand-700">Habilidades Verdes Ya</strong>.
+                    Pregúntale lo que quieras sobre el Currículo
+                    Verde, los stands interactivos del lanzamiento y el material didáctico.
+                  </p>
+                  <p className="mt-3 text-sm leading-relaxed text-neutral-600 sm:text-base">
+                    Activa el <strong className="text-neutral-800">micrófono</strong> para
+                    hablar con ella y la <strong className="text-neutral-800">cámara</strong> si
+                    quieres que te vea. Te responde con voz y gestos en tiempo real.
+                  </p>
+                  <p className="mt-4 text-xs font-bold uppercase tracking-widest text-brand-500">
+                    Pulsa “Llamar” para comenzar
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Intermediate "connecting" screen: shown only while the call is
+                being established, before the character appears. */}
+            {loading && !inCall && (
+              <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-6 bg-[#f7f9ec]/95 backdrop-blur-sm">
+                <div className="size-16 animate-spin rounded-full border-4 border-brand-200 border-t-brand-500" />
+                <div className="text-center">
+                  <p className="text-lg font-black uppercase tracking-widest text-brand-700">
+                    Conectando con Manglara
+                  </p>
+                  <p className="mt-1 text-xs font-semibold text-neutral-500">
+                    Estamos preparando tu llamada virtual…
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Assistant floating label */}
             <div className="absolute top-4 left-4 rounded-xl bg-navy-600/90 backdrop-blur-md px-3.5 py-1.5 text-xs font-extrabold text-white border border-navy-500/20 shadow-lg tracking-wide uppercase z-20">
@@ -126,23 +172,10 @@ export function CallScreen() {
                   <span className="text-[8px] font-extrabold uppercase tracking-wider">Cámara apagada</span>
                 </div>
               )}
-              <div className="absolute bottom-1.5 left-1.5 rounded bg-navy-600/80 backdrop-blur-md px-2 py-0.5 text-[8px] font-bold text-white border border-navy-500/10">
+               <div className="absolute bottom-1.5 left-1.5 rounded bg-navy-600/80 backdrop-blur-md px-2 py-0.5 text-[8px] font-bold text-white border border-navy-500/10">
                 Tú
               </div>
             </div>
-
-            {/* Floating Info Overlay Card if not in call */}
-            {!inCall && (
-              <div className="absolute top-4 right-4 max-w-xs bg-white/95 backdrop-blur-md border border-brand-200/60 rounded-2xl p-4 shadow-xl text-left space-y-2 hidden md:block z-20">
-                <h4 className="text-[10px] font-black text-brand-600 uppercase tracking-widest flex items-center gap-1">
-                  <Info className="size-3 text-brand-500" />
-                  ¿Cómo te ayuda Manglara?
-                </h4>
-                <p className="text-[11px] text-neutral-600 leading-relaxed font-semibold">
-                  Manglara es la asistente oficial de <strong>Habilidades Verdes Ya</strong>. Inicia la llamada para consultarle dudas sobre el Currículo Verde, los stands interactivos del lanzamiento y el material didáctico.
-                </p>
-              </div>
-            )}
           </div>
 
           {/* Floating controls dock overlay (aligned to bottom) */}
@@ -150,6 +183,18 @@ export function CallScreen() {
             {error && (
               <p className="text-center text-xs text-white bg-status-error px-4 py-2 rounded-xl shadow-lg border border-status-error/20 font-bold animate-bounce">
                 {error}
+              </p>
+            )}
+
+            {notice && (
+              <p
+                className={`text-center text-xs px-4 py-2 rounded-xl shadow-lg border font-bold ${
+                  notice.tone === "warn"
+                    ? "bg-status-warning/90 text-neutral-900 border-status-warning/40 animate-pulse"
+                    : "bg-status-success/90 text-white border-status-success/30"
+                }`}
+              >
+                {notice.text}
               </p>
             )}
 

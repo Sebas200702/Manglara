@@ -6,11 +6,11 @@ interface PartnerLogo {
 }
 
 const PARTNER_LOGOS: PartnerLogo[] = [
-  { src: "/logos/union-europea.svg", alt: "Cofinanciado por la Unión Europea", aspect: 3.535 },
-  { src: "/logos/cinop.svg", alt: "CINOP", aspect: 2.93 },
-  { src: "/logos/politeknika-txorierri.svg", alt: "Politeknika Txorierri", aspect: 1.935 },
-  { src: "/logos/fci.webp", alt: "Fundación Colombia Incluyente", aspect: 2.549 },
-  { src: "/logos/plan-international.svg", alt: "Plan International — Hasta lograr la igualdad", aspect: 1.769 },
+    { src: "/logos/plan-international.svg", alt: "Plan International — Hasta lograr la igualdad", aspect: 1.769 },
+    { src: "/logos/fci.webp", alt: "Fundación Colombia Incluyente", aspect: 2.549 },
+    { src: "/logos/cinop.svg", alt: "CINOP", aspect: 2.93 },
+    { src: "/logos/politeknika-txorierri.svg", alt: "Politeknika Txorierri", aspect: 1.935 },
+    { src: "/logos/union-europea.svg", alt: "Cofinanciado por la Unión Europea", aspect: 3.535 },
 ];
 
 export function PartnerLogos({ className = "" }: { className?: string }) {

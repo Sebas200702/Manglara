@@ -27,6 +27,7 @@ export function useCallScreen() {
   const thinking = useCallScreenStore((s) => s.thinking);
   const inCall = useCallScreenStore((s) => s.inCall);
   const error = useCallScreenStore((s) => s.error);
+  const notice = useCallScreenStore((s) => s.notice);
   const transcripts = useCallScreenStore((s) => s.transcripts);
   const loading = useCallScreenStore((s) => s.loading);
   const chatOpen = useCallScreenStore((s) => s.chatOpen);
@@ -38,6 +39,7 @@ export function useCallScreen() {
   const setThinking = useCallScreenStore((s) => s.setThinking);
   const setInCall = useCallScreenStore((s) => s.setInCall);
   const setError = useCallScreenStore((s) => s.setError);
+  const setNotice = useCallScreenStore((s) => s.setNotice);
   const setLoading = useCallScreenStore((s) => s.setLoading);
   const setChatOpen = useCallScreenStore((s) => s.setChatOpen);
   const setMicEnabled = useCallScreenStore((s) => s.setMicEnabled);
@@ -47,6 +49,15 @@ export function useCallScreen() {
   const resetCallState = useCallScreenStore((s) => s.resetCallState);
 
   const avatarState = deriveAvatarState(connection, speaking, thinking);
+  /** Clears the "Reconectado" notice after a moment; see `onReconnected`. */
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    },
+    []
+  );
 
   // Create and load the 3D avatar once, independent of the call lifecycle, so
   // it renders (idle) before and after calls.
@@ -84,8 +95,23 @@ export function useCallScreen() {
     clientRef.current?.setInputSuppressed(speaking);
   }, [speaking]);
 
+  const showNotice = (text: string, tone: "warn" | "ok", clearAfterMs?: number) => {
+    if (noticeTimerRef.current) {
+      clearTimeout(noticeTimerRef.current);
+      noticeTimerRef.current = null;
+    }
+    setNotice({ text, tone });
+    if (clearAfterMs) {
+      noticeTimerRef.current = setTimeout(() => {
+        setNotice(null);
+        noticeTimerRef.current = null;
+      }, clearAfterMs);
+    }
+  };
+
   const startCall = async () => {
     setError(null);
+    setNotice(null);
     setLoading(true);
     clearTranscripts();
 
@@ -117,6 +143,25 @@ export function useCallScreen() {
         setThinking(false);
       },
       onError: (message) => setError(message),
+      onReconnecting: (attempt) => {
+        // Not an error: the call is still up and the client keeps retrying, so
+        // this is a status line the user can wait out, not a failure banner.
+        showNotice(
+          attempt === 1
+            ? "Reconectando…"
+            : `Reconectando… (intento ${attempt})`,
+          "warn"
+        );
+        // The old session's audio died with the socket. Clear the mouth and
+        // the speaking flag so the avatar doesn't freeze mid-word.
+        controllerRef.current?.interrupt();
+        setSpeaking(false);
+        setThinking(false);
+      },
+      onReconnected: () => {
+        setError(null);
+        showNotice("Reconectado", "ok", 2500);
+      },
       onVideoStream: (stream) => {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
@@ -150,6 +195,9 @@ export function useCallScreen() {
       }
 
       setInCall(true);
+      // Arms auto-reconnect. Until this is set, an unexpected close is read as
+      // a failed *initial* connect and surfaces as an error instead of healing.
+      client.markActive();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Error al iniciar";
       setError(message);
@@ -161,6 +209,10 @@ export function useCallScreen() {
   };
 
   const endCall = () => {
+    if (noticeTimerRef.current) {
+      clearTimeout(noticeTimerRef.current);
+      noticeTimerRef.current = null;
+    }
     clientRef.current?.disconnect();
     clientRef.current = null;
     controllerRef.current?.stopStream();
@@ -187,6 +239,7 @@ export function useCallScreen() {
     connection,
     inCall,
     error,
+    notice,
     transcripts,
     loading,
     chatOpen,

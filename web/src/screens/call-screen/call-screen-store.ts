@@ -8,12 +8,23 @@ function nextEntryId(): string {
   return `t-${++entryCounter}-${Date.now()}`;
 }
 
+/**
+ * Transient status line, separate from `error`. A reconnection is not a failure
+ * - the call is still up - so it must not render as one, and it has to clear
+ * itself once the link is back.
+ */
+export interface CallNotice {
+  text: string;
+  tone: "warn" | "ok";
+}
+
 interface CallScreenState {
   connection: ConnectionState;
   speaking: boolean;
   thinking: boolean;
   inCall: boolean;
   error: string | null;
+  notice: CallNotice | null;
   transcripts: TranscriptEntry[];
   loading: boolean;
   chatOpen: boolean;
@@ -24,6 +35,7 @@ interface CallScreenState {
   setThinking: (thinking: boolean) => void;
   setInCall: (inCall: boolean) => void;
   setError: (error: string | null) => void;
+  setNotice: (notice: CallNotice | null) => void;
   setLoading: (loading: boolean) => void;
   setChatOpen: (chatOpen: boolean | ((open: boolean) => boolean)) => void;
   setMicEnabled: (enabled: boolean) => void;
@@ -39,6 +51,7 @@ export const useCallScreenStore = create<CallScreenState>((set) => ({
   thinking: false,
   inCall: false,
   error: null,
+  notice: null,
   transcripts: [],
   loading: false,
   chatOpen: false,
@@ -50,6 +63,7 @@ export const useCallScreenStore = create<CallScreenState>((set) => ({
   setThinking: (thinking) => set({ thinking }),
   setInCall: (inCall) => set({ inCall }),
   setError: (error) => set({ error }),
+  setNotice: (notice) => set({ notice }),
   setLoading: (loading) => set({ loading }),
   setChatOpen: (chatOpen) =>
     set((state) => ({
@@ -83,6 +97,7 @@ export const useCallScreenStore = create<CallScreenState>((set) => ({
       speaking: false,
       thinking: false,
       connection: "disconnected",
+      notice: null,
       chatOpen: false,
       micEnabled: true,
       cameraEnabled: true,

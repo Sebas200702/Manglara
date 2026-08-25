@@ -12,8 +12,18 @@ __pycache__/
 # Local-only avatar pipeline test assets (third-party IP — not for commit/deploy)
 web/public/ragatha_test*.glb
 web/public/vrm_test.glb
-scripts/avatar-rig-transfer/output/
-scripts/avatar-rig-transfer/refs/*.glb
+# scripts/avatar-rig-transfer/ is an allowlist. The folder accumulates one-off
+# Blender probes written to chase a single artifact (a smeared weight, a dark
+# vertex, a bad viseme) plus heavy derived output - GLB iterations and QA render
+# sheets, ~1.4 GB at its peak. Those belong on the disk of whoever is mid
+# investigation, never in the repo. Ignore rules do not untrack anything, so
+# everything already committed here stays committed; this only stops NEW churn
+# from being swept in by `git add -A`. To keep a new tool, `git add -f` it.
+scripts/avatar-rig-transfer/*
+
+# Snapshot of the assembled Live system prompt (scripts/reload_knowledge.py).
+# Generated from Supabase, so it goes stale the moment a digest changes.
+docs/*.generated.txt
 # NOTE: custom_avatar.glb (Manglara, the foundation's own character) IS committed
 # so the deployed app can serve it (avatar 404'd in prod otherwise). If you move
 # it to a CDN, set VITE_AVATAR_URL instead and re-add the ignore below.

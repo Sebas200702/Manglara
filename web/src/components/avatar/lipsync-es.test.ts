@@ -112,6 +112,63 @@ describe("pacing", () => {
   });
 });
 
+describe("stress (prosody for the body, not the mouth)", () => {
+  /** The viseme of the stressed syllable, or "-" if the word has no stress. */
+  const stressOf = (text: string): string =>
+    spanishTextToUnits(text)
+      .filter((u) => u.stressed)
+      .map((u) => u.viseme)
+      .join(" ") || "-";
+
+  test("a written accent IS the stress, wherever it falls", () => {
+    expect(stressOf("canción")).toBe("O"); // can-CIÓN
+    expect(stressOf("árbol")).toBe("aa"); // ÁR-bol, against the aguda rule
+    expect(stressOf("bambú")).toBe("U");
+  });
+
+  test("words ending in a vowel, n or s are stressed on the penultimate", () => {
+    expect(stressOf("hola")).toBe("O"); // HO-la
+    expect(stressOf("cantan")).toBe("aa"); // CAN-tan
+    expect(stressOf("manglares")).toBe("aa"); // man-GLA-res
+  });
+
+  test("anything else is stressed on the last syllable", () => {
+    expect(stressOf("papel")).toBe("E"); // pa-PEL
+    expect(stressOf("verdad")).toBe("aa"); // ver-DAD
+  });
+
+  test("a diphthong is one syllable, stressed on its strong vowel", () => {
+    // "bueno" is BUE-no: two syllables, not three, and the beat lands on the e.
+    expect(stressOf("bueno")).toBe("E");
+    expect(stressOf("tierra")).toBe("E");
+  });
+
+  test("unstressed monosyllables do not carry a beat", () => {
+    // Articles, prepositions and clitics lean on the word next to them. Nodding
+    // on "de" and "la" puts the emphasis on the joins instead of the meaning.
+    expect(stressOf("de")).toBe("-");
+    expect(stressOf("la")).toBe("-");
+    expect(stressOf("que")).toBe("-");
+    // ...but a content monosyllable does.
+    expect(stressOf("sol")).toBe("O");
+  });
+
+  test("every word contributes at most one stress", () => {
+    const text = "Manglara teje redes verdes con las comunidades del Caribe";
+    const units = spanishTextToUnits(text);
+    const stressed = units.filter((u) => u.stressed).length;
+    // Nine words, two of them ("con", "las", "del") unstressed function words.
+    expect(stressed).toBeGreaterThan(4);
+    expect(stressed).toBeLessThanOrEqual(text.split(" ").length);
+  });
+
+  test("stress never lands on a rest or a consonant", () => {
+    for (const u of spanishTextToUnits("¡Hola! Soy Manglara, ¿cómo estás?")) {
+      if (u.stressed) expect(u.vowel).toBe(true);
+    }
+  });
+});
+
 describe("degenerate input", () => {
   test("empty and shape-less input yields no units", () => {
     expect(spanishTextToUnits("")).toEqual([]);

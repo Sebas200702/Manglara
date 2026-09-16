@@ -341,6 +341,20 @@ export class VoiceClient {
     }
   }
 
+  /**
+   * Ask Manglara something as TEXT, so she answers out loud with no microphone.
+   *
+   * Diagnostic aid for lip-sync: it produces a complete real turn (real voice at
+   * its real tempo, real streamed transcript, real playback clock), which is what
+   * makes the mouth-vs-audio timing reproducible to measure. Exposed on the
+   * window as `__ask` while a call is up.
+   */
+  sendText(text: string): boolean {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+    this.ws.send(JSON.stringify({ type: "text", data: text }));
+    return true;
+  }
+
   async startMic(): Promise<void> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("Not connected");

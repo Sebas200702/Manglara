@@ -12,6 +12,12 @@ __pycache__/
 # Local-only avatar pipeline test assets (third-party IP — not for commit/deploy)
 web/public/ragatha_test*.glb
 web/public/vrm_test.glb
+web/public/shapes key.glb
+web/public/manglara-shapeskey.glb
+web/public/manglaria.glb
+web/public/Test_Manglara_V2*.glb
+web/public/Test_Manglara_V3*.glb
+artifacts/
 # scripts/avatar-rig-transfer/ is an allowlist. The folder accumulates one-off
 # Blender probes written to chase a single artifact (a smeared weight, a dark
 # vertex, a bad viseme) plus heavy derived output - GLB iterations and QA render

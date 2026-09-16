@@ -20,6 +20,8 @@ export function useCallScreen() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const avatarContainerRef = useRef<HTMLDivElement | null>(null);
   const controllerRef = useRef<AvatarController | null>(null);
+  /** Latest startCall, for the dev-only no-mic entry point below. */
+  const startCallRef = useRef<((o?: { useMic?: boolean }) => Promise<void>) | null>(null);
   const [avatarReady, setAvatarReady] = useState(false);
 
   const connection = useCallScreenStore((s) => s.connection);
@@ -77,6 +79,27 @@ export function useCallScreen() {
     controllerRef.current?.setState(avatarState);
   }, [avatarState]);
 
+  // Pointer-following gaze is only for the idle lobby. During a call the
+  // camera-driven gaze from TalkingHead must remain authoritative.
+  useEffect(() => {
+    const node = avatarContainerRef.current;
+    if (!node || inCall) return;
+    const onPointerMove = (e: PointerEvent) => {
+      controllerRef.current?.trackPointer(e.clientX, e.clientY);
+    };
+    node.addEventListener("pointermove", onPointerMove);
+    return () => node.removeEventListener("pointermove", onPointerMove);
+  }, [inCall]);
+
+  // Lip-sync diagnostics: `window.__callNoMic()` starts a real call with her
+  // voice and transcript but no microphone, so turns can be driven by
+  // `window.__ask("...")` and the mouth-vs-audio timing measured repeatably.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    (window as unknown as Record<string, unknown>).__callNoMic = () =>
+      startCallRef.current?.({ useMic: false });
+  }, []);
+
   // Half-duplex: while Manglara is speaking, suppress the mic so her voice over
   // an external speaker isn't captured and echoed back into a self-reply loop.
   // `speaking` reflects real playback end in both the avatar and fallback paths.
@@ -84,7 +107,13 @@ export function useCallScreen() {
     clientRef.current?.setInputSuppressed(speaking);
   }, [speaking]);
 
-  const startCall = async () => {
+  /**
+   * `useMic: false` connects and streams her voice WITHOUT opening the
+   * microphone, for driving real spoken turns from `window.__ask("...")`. That is
+   * how lip-sync timing gets measured reproducibly (see VoiceClient.sendText);
+   * the normal button path is unchanged and always uses the mic.
+   */
+  const startCall = async ({ useMic = true }: { useMic?: boolean } = {}) => {
     setError(null);
     setLoading(true);
     clearTranscripts();
@@ -100,7 +129,10 @@ export function useCallScreen() {
       },
       onTurnComplete: () => {
         setThinking(false);
-        setSpeaking(false);
+        // Do NOT call setSpeaking(false) here: Gemini has finished generating chunks,
+        // but the client has buffered audio still actively playing out of the speakers.
+        // onSpeakingChange(false) fires when playback actually finishes, keeping
+        // the microphone suppressed to prevent self-interruption (barge-in echo).
         controllerRef.current?.notifyEnd();
       },
       onInterrupted: () => {
@@ -128,7 +160,7 @@ export function useCallScreen() {
 
     try {
       await client.connect();
-      await client.startMic();
+      if (useMic) await client.startMic();
 
       // If the avatar loaded, let TalkingHead own playback + lip-sync.
       // Otherwise fall back to VoiceClient's built-in audio playback.
@@ -149,6 +181,15 @@ export function useCallScreen() {
         );
       }
 
+      // Lip-sync diagnostics: drive real spoken turns from the console.
+      if (import.meta.env.DEV) {
+        (window as unknown as Record<string, unknown>).__ask = (text: string) => {
+          const ok = client.sendText(text);
+          console.log(ok ? `[ask] ${text}` : "[ask] socket no está abierto");
+          return ok;
+        };
+      }
+
       setInCall(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Error al iniciar";
@@ -159,6 +200,8 @@ export function useCallScreen() {
       setLoading(false);
     }
   };
+
+  startCallRef.current = startCall;
 
   const endCall = () => {
     clientRef.current?.disconnect();

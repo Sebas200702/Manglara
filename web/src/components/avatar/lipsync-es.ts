@@ -57,6 +57,12 @@ interface Unit {
   gap: number;
   isVowel: boolean;
   isWeak: boolean;
+  /** This vowel carried a written accent (á, é, í, ó, ú) before folding. */
+  accented: boolean;
+  /** Syllable nucleus carrying the word's stress (see markWordStress). */
+  stressed: boolean;
+  /** Punctuation strength of `gap`, 0 for a plain word break. */
+  boundary: number;
 }
 
 /** One mouth shape to hold for `duration` ms. */
@@ -64,12 +70,108 @@ export interface VisemeUnit {
   /** null = mouth at rest: word gap, pause or silence. */
   viseme: Viseme | null;
   duration: number;
+  /**
+   * True when this unit is a syllable nucleus (a vowel).
+   *
+   * Syllable nuclei are what the audio can actually be aligned to: each one is
+   * an energy peak in the waveform, so the consumer can pin them to the beats it
+   * hears instead of laying the sequence out on an averaged clock. See
+   * viseme-driver's audio-anchored path.
+   */
+  vowel?: boolean;
+  /**
+   * True when this vowel is the stressed syllable of its word.
+   *
+   * Prosody, not articulation: nothing about the mouth changes here. It is what
+   * the body runs on - a speaker's beat gestures and brow accents land on
+   * stressed syllables, so `viseme-driver` turns these into `Beat`s as the
+   * playback cursor crosses them and `motion-director` decides what to do with
+   * them. Without it the body can only gesture on a timer, which is the single
+   * thing that most makes a talking head read as a puppet.
+   */
+  stressed?: boolean;
+  /**
+   * On a rest unit: how strong a punctuation boundary it is, 0..1. Zero (the
+   * default) is a plain word break.
+   *
+   * Prosody again, and it cannot be recovered from the duration. A comma is the
+   * commonest clause boundary in speech and the most natural place for a hand
+   * beat, but its *pause* is barely longer than a word gap - so the mouth quite
+   * rightly does not stop for it, and a consumer looking only at rest lengths
+   * would never see it.
+   */
+  boundary?: number;
 }
 
 /** Pause between words - short enough that speech still reads as connected. */
 const WORD_GAP = 45;
 /** Pause at clause/sentence punctuation, where the mouth also returns to rest. */
 const PUNCT_GAP = 170;
+/** Boundary strength of a comma-class mark: a clause break, not a full stop. */
+const CLAUSE_BOUNDARY = 0.55;
+/** Boundary strength of a sentence stop. */
+const SENTENCE_BOUNDARY = 1;
+
+/** Vowels that carry a written accent, i.e. the word's stress is already marked. */
+const ACCENTED = "áéíóú";
+
+/**
+ * Monosyllables that carry no stress of their own.
+ *
+ * Spanish stress rules place the accent inside a word, but a one-syllable word
+ * only has stress if it is a content word. Articles, prepositions, conjunctions
+ * and clitic pronouns lean on the word next to them, and treating every "de",
+ * "la" and "que" as an accent means the head nods on the function words instead
+ * of on what is being said. Words with a written accent (él, sí, más, tú) are
+ * never in this list - the accent mark is exactly the distinction it makes, and
+ * it is checked before this set is consulted.
+ */
+const UNSTRESSED_MONOSYLLABLES = new Set([
+  "el", "la", "los", "las", "lo", "un", "de", "del", "al", "y", "e", "o", "u",
+  "que", "se", "me", "te", "le", "les", "nos", "os", "su", "sus", "mi", "tu",
+  "con", "por", "sin", "en", "a", "ni", "si", "como", "cuando", "donde",
+]);
+
+/**
+ * Mark the stressed syllable of one word, in place.
+ *
+ * Standard Spanish rules, in the order they override each other:
+ *  1. a written accent IS the stress, wherever it falls;
+ *  2. a word ending in a vowel, `n` or `s` is stressed on the penultimate
+ *     syllable (llana);
+ *  3. anything else on the last syllable (aguda).
+ *
+ * Syllables are counted from the vowel units: a run of adjacent vowels is one
+ * syllable (a diphthong), and its nucleus is the strong vowel - `bueno` is two
+ * syllables with the stress on the `e`, not three with it on the `u`.
+ */
+function markWordStress(word: string, unitsOfWord: Unit[]): void {
+  const nuclei: Unit[] = [];
+  for (let i = 0; i < unitsOfWord.length; i++) {
+    if (!unitsOfWord[i]!.isVowel) continue;
+    let j = i;
+    while (j + 1 < unitsOfWord.length && unitsOfWord[j + 1]!.isVowel) j++;
+    const run = unitsOfWord.slice(i, j + 1);
+    nuclei.push(
+      run.find((u) => u.accented) ?? run.find((u) => !u.isWeak) ?? run[run.length - 1]!
+    );
+    i = j;
+  }
+  if (!nuclei.length) return;
+
+  const marked = nuclei.find((u) => u.accented);
+  if (marked) {
+    marked.stressed = true;
+    return;
+  }
+  if (nuclei.length === 1) {
+    if (!UNSTRESSED_MONOSYLLABLES.has(word)) nuclei[0]!.stressed = true;
+    return;
+  }
+  const last = word[word.length - 1] ?? "";
+  const llana = VOWELS.includes(last) || last === "n" || last === "s";
+  nuclei[nuclei.length - (llana ? 2 : 1)]!.stressed = true;
+}
 
 /**
  * Convert a Spanish string into mouth shapes to hold, in order.
@@ -82,20 +184,43 @@ export function spanishTextToUnits(text: string): VisemeUnit[] {
   if (!text) return [];
 
   // Fold accents and lowercase, but keep `ñ` and `ü` distinct where they matter.
-  const s = Array.from(text.toLowerCase())
-    .map((c) => (c === "ü" || c === "ñ" ? c : FOLD[c] ?? c))
-    .join("");
+  // `accentAt` records which positions of the FOLDED string carried an accent:
+  // folding is what makes the text easy to read phonetically, but the accent is
+  // the one thing that says where the stress is (see markWordStress). Built by
+  // walking code POINTS and indexing by code UNIT, so an emoji in the transcript
+  // cannot slide the two out of alignment.
+  let s = "";
+  const accentAt: boolean[] = [];
+  for (const ch of Array.from(text.toLowerCase())) {
+    const folded = ch === "ü" || ch === "ñ" ? ch : FOLD[ch] ?? ch;
+    for (let k = 0; k < folded.length; k++) accentAt.push(ACCENTED.includes(ch));
+    s += folded;
+  }
 
   const units: Unit[] = [];
   let gap = 0;
+  /** Punctuation strength of the pending gap (see VisemeUnit.boundary). */
+  let gapBoundary = 0;
+  /** Where the word being read starts in `s`, and which unit it starts at. */
+  let wordCharStart = 0;
+  let wordStart = 0;
 
-  const push = (viseme: Viseme, scale = 1): void => {
+  /** Close the word that ends at `end` (exclusive) and mark its stress. */
+  const endWord = (end: number): void => {
+    const word = s.slice(wordCharStart, end);
+    if (word) markWordStress(word, units.slice(wordStart));
+    wordCharStart = end + 1;
+    wordStart = units.length;
+  };
+
+  const push = (viseme: Viseme, scale = 1, accented = false): void => {
     const prev = units[units.length - 1];
     // Merge a repeated viseme instead of emitting two identical shapes back to
     // back (e.g. "innecesario", or a consonant meeting the same viseme across a
     // word boundary) - two in a row read as one longer hold anyway.
     if (prev && prev.viseme === viseme && gap === 0) {
       prev.duration += DURATION[viseme] * scale * 0.4;
+      if (accented) prev.accented = true;
       return;
     }
     const isVowel = VOWEL_VISEMES.has(viseme);
@@ -105,8 +230,12 @@ export function spanishTextToUnits(text: string): VisemeUnit[] {
       gap,
       isVowel,
       isWeak: false,
+      accented,
+      stressed: false,
+      boundary: gapBoundary,
     });
     gap = 0;
+    gapBoundary = 0;
   };
 
   let i = 0;
@@ -117,19 +246,26 @@ export function spanishTextToUnits(text: string): VisemeUnit[] {
 
     // --- separators -------------------------------------------------------
     if (c === " " || c === "\n" || c === "\t") {
+      endWord(i);
       gap = Math.max(gap, WORD_GAP);
       i += 1;
       continue;
     }
     if (".,;:!?¡¿…-–—\"'()".includes(c)) {
+      endWord(i);
       // Close the mouth at a real pause; that boundary is a strong readability
       // cue and it keeps long utterances from looking like one endless blur.
       if (".;:!?…".includes(c)) {
         gap = Math.max(gap, PUNCT_GAP);
+        gapBoundary = Math.max(gapBoundary, SENTENCE_BOUNDARY);
         push("sil");
         gap = WORD_GAP;
+        wordStart = units.length; // the rest belongs to no word
       } else {
+        // A comma barely lengthens the pause - the mouth should not stop for it
+        // - but it IS a clause boundary, and the body needs to know.
         gap = Math.max(gap, WORD_GAP);
+        gapBoundary = Math.max(gapBoundary, CLAUSE_BOUNDARY);
       }
       i += 1;
       continue;
@@ -151,7 +287,7 @@ export function spanishTextToUnits(text: string): VisemeUnit[] {
 
     // --- vowels -----------------------------------------------------------
     if (VOWELS.includes(c)) {
-      push(VOWEL_VISEME[c]);
+      push(VOWEL_VISEME[c], 1, accentAt[i] === true);
       const u = units[units.length - 1];
       if (u) u.isWeak = WEAK.includes(c);
       i += 1;
@@ -191,6 +327,10 @@ export function spanishTextToUnits(text: string): VisemeUnit[] {
     i += 1;
   }
 
+  // A fragment usually ends mid-sentence with no trailing separator, so the last
+  // word only gets its stress here.
+  endWord(s.length);
+
   if (!units.length) return [];
 
   // Diphthongs: a weak vowel touching another vowel is a glide, so it gets a
@@ -211,10 +351,14 @@ export function spanishTextToUnits(text: string): VisemeUnit[] {
   // explicit rest unit, so the consumer never has to special-case them.
   const out: VisemeUnit[] = [];
   for (const u of units) {
-    if (u.gap > 0) out.push({ viseme: null, duration: u.gap });
+    if (u.gap > 0) {
+      out.push({ viseme: null, duration: u.gap, vowel: false, boundary: u.boundary });
+    }
     out.push({
       viseme: u.viseme === "sil" ? null : u.viseme,
       duration: u.duration,
+      vowel: u.isVowel && u.viseme !== "sil",
+      stressed: u.stressed,
     });
   }
   return out;

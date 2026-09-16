@@ -66,6 +66,23 @@ class GeminiLiveClient:
             audio=types.Blob(data=pcm, mime_type="audio/pcm;rate=16000")
         )
 
+    async def send_text_turn(self, text: str):
+        """Send a user turn as TEXT and close it, so Gemini answers out loud.
+
+        Development/diagnostic aid: it drives a complete, real spoken turn (real
+        voice at its real tempo, real streamed transcript) with no microphone,
+        which is what makes lip-sync timing reproducible to measure. Not used by
+        the normal call flow, where turns come from send_audio_pcm16_16k.
+        """
+        if not self.session:
+            logger.warning("[gemini] no session, dropping text turn")
+            return
+        logger.info("[gemini] text turn: %r", text)
+        await self.session.send_client_content(
+            turns=types.Content(role="user", parts=[types.Part(text=text)]),
+            turn_complete=True,
+        )
+
     async def send_image_jpeg(self, image_data: bytes):
         if not self.session:
             return
@@ -93,6 +110,10 @@ class GeminiLiveClient:
                 )
 
                 sc = response.server_content
+
+                if data := response.data:
+                    logger.debug("[gemini] yielding %d bytes of audio", len(data))
+                    yield data
 
                 if sc:
                     # Partial (interim) transcription — user is still speaking
@@ -153,7 +174,3 @@ class GeminiLiveClient:
                         self._user_text_buffer = ""
                         if self.turn_complete_callback:
                             await self.turn_complete_callback()
-
-                if data := response.data:
-                    logger.debug("[gemini] yielding %d bytes of audio", len(data))
-                    yield data

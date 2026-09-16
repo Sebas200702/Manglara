@@ -29,7 +29,6 @@ export function CallScreen() {
     connection,
     inCall,
     error,
-    notice,
     transcripts,
     loading,
     chatOpen,
@@ -92,7 +91,6 @@ export function CallScreen() {
             {/* Mangrove environment backdrop (looping video + ambient sound).
                 The video shows only during the call, behind the avatar. */}
             <MangroveVideo
-              showVideo={inCall}
               ambient={inCall}
               ducked={avatarState === "speaking"}
             />
@@ -121,7 +119,7 @@ export function CallScreen() {
                 autoPlay
                 playsInline
                 muted
-                className={`size-full object-cover bg-neutral-100 ${cameraEnabled ? "" : "hidden"}`}
+                className={`size-full object-cover scale-x-[-1] bg-neutral-100 ${cameraEnabled ? "" : "hidden"}`}
               />
               {!cameraEnabled && (
                 <div className="flex size-full flex-col items-center justify-center gap-1 bg-neutral-150 text-neutral-400">
@@ -140,18 +138,6 @@ export function CallScreen() {
             {error && (
               <p className="text-center text-xs text-white bg-status-error px-4 py-2 rounded-xl shadow-lg border border-status-error/20 font-bold animate-pulse">
                 {error}
-              </p>
-            )}
-
-            {notice && (
-              <p
-                className={`text-center text-xs px-4 py-2 rounded-xl shadow-lg border font-bold ${
-                  notice.tone === "warn"
-                    ? "bg-status-warning/90 text-neutral-900 border-status-warning/40 animate-pulse"
-                    : "bg-status-success/90 text-white border-status-success/30"
-                }`}
-              >
-                {notice.text}
               </p>
             )}
 

@@ -42,7 +42,9 @@ export class AudioPlaybackQueue {
 
     const now = this.ctx.currentTime;
     if (this.nextStartTime < now) {
-      this.nextStartTime = now;
+      // 120ms safety cushion so consecutive chunks arriving over WebSocket
+      // are scheduled ahead of the playhead without dropping to 0 between chunks.
+      this.nextStartTime = now + 0.12;
     }
 
     const wasPlaying = this._isPlaying;

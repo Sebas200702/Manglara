@@ -73,8 +73,26 @@ declare module "@met4citizen/talkinghead" {
 
   /** Internal morph-target entry (subset used to drive lip-sync externally). */
   export interface MorphTargetEntry {
+    /**
+     * Highest-priority slot short of `fixed`, applied verbatim with no easing
+     * and never written by the library itself: the hook for an external
+     * real-time driver. Unlike `newvalue` it is NOT cleared after use - set it
+     * back to null to release the morph (with `needsUpdate`, or the entry is
+     * skipped and it sticks).
+     */
+    realtime?: number | null;
+    /** Animation-priority slot. Consumed and cleared on the frame it applies. */
     newvalue: number | null;
     needsUpdate: boolean;
+    /** Value currently applied to the meshes. */
+    value?: number;
+    /**
+     * The `morphTargetInfluences` arrays this morph lives in, and the index it
+     * occupies in each. One entry per mesh carrying the target, so a single
+     * viseme can span the skin, teeth and tongue primitives.
+     */
+    ms?: Array<Float32Array | number[] | undefined>;
+    is?: number[];
     [key: string]: unknown;
   }
 
@@ -104,10 +122,38 @@ declare module "@met4citizen/talkinghead" {
     lookAtCamera(t: number): void;
     lookAhead(t: number): void;
     makeEyeContact(t: number): void;
+    /**
+     * Turn her head and gaze to the screen position (x, y) in visual-viewport
+     * coordinates for `t` milliseconds. Use this to follow the user's pointer
+     * when she is idle or listening. Requires a mounted camera.
+     */
+    lookAt(x: number, y: number, t: number): void;
     /** Play a named pose from gestureTemplates; holds `dur` s, eases over `ms`. */
     playGesture(name: string, dur?: number, mirror?: boolean, ms?: number): void;
-    /** Relax the current gesture back to the idle pose over `ms`. */
+    /**
+     * Relax the current gesture back to the idle pose over `ms`.
+     *
+     * Restores ONLY the props of the gesture it is holding, which is why every
+     * beat we play has to name every joint it might have to give back - see
+     * `avatar-controller.playGestureBeat`.
+     */
     stopGesture(ms?: number): void;
+    /**
+     * Rest rotation/position of a joint in the current pose template, as
+     * `"Bone.rotation"` or `"Bone.quaternion"`. Returns the value held by the
+     * ACTIVE GESTURE for any joint that gesture covers, so it only reports the
+     * true rest pose while nothing is playing. Undefined for an unknown joint.
+     */
+    getPoseTemplateProp(key: string): unknown;
+    /**
+     * IK-solve both arms to a random nearby target and ease them there and
+     * back: conversational hand movement.
+     *
+     * Assignable on purpose: the library calls this itself on every
+     * `playback-started`, and we replace it with a no-op so the arms have a
+     * single director (see `avatar-controller.init`).
+     */
+    speakWithHands: (delay?: number, prob?: number) => void;
     start(): void;
     stop(): void;
 

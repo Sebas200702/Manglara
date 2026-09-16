@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -183,14 +184,31 @@ async def ws_voice(ws: WebSocket):
                     image_bytes = base64.b64decode(data)
                     await gemini.send_image_jpeg(image_bytes)
                     logger.debug(f"[ws] Video frame sent ({len(image_bytes)} bytes)")
+                elif msg_type == "text":
+                    # Diagnostic path: drive a real spoken turn without a mic, so
+                    # lip-sync timing can be measured reproducibly. See
+                    # GeminiClient.send_text_turn.
+                    await gemini.send_text_turn(data)
         except WebSocketDisconnect:
             logger.info("[ws] Client disconnected")
         except Exception as e:
             logger.error(f"[ws] Error in ws_to_gemini: {e}")
 
+    # Diagnostics only: with LIPSYNC_DUMP set to a path, append the assistant's
+    # raw 24kHz PCM there. Used to verify the lip-sync syllable-beat detector
+    # against her real voice offline (the browser preview throttles the render
+    # loop too hard to sample the audio at the needed rate). Off unless set.
+    dump_path = os.environ.get("LIPSYNC_DUMP")
+
     async def gemini_to_ws():
         try:
             async for audio_chunk in gemini.receive_loop():
+                if dump_path:
+                    try:
+                        with open(dump_path, "ab") as fh:
+                            fh.write(audio_chunk)
+                    except Exception:
+                        pass
                 b64 = base64.b64encode(audio_chunk).decode()
                 await ws.send_json({"type": "audio", "data": b64})
         except Exception as e:

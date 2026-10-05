@@ -13,6 +13,7 @@ from gemini_client import GeminiLiveClient
 from pdf.digest import backfill_digests, build_knowledge_context
 from pdf.router import router as pdf_router, get_active_documents, set_active_documents
 from pdf.retrieval import retrieve_context
+from pdf.sources import ready_curriculum_document_ids
 from prompt import build_system_prompt
 
 logging.basicConfig(
@@ -32,7 +33,7 @@ async def activate_ready_documents():
     # otherwise sessions run without any knowledge source.
     try:
         docs = await list_documents()
-        ready = [d["id"] for d in docs if d["status"] == "ready"]
+        ready = ready_curriculum_document_ids(docs)
         set_active_documents(ready)
         logger.info("[startup] activated %d ready documents", len(ready))
         if ready:

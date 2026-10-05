@@ -19,6 +19,8 @@ import asyncio
 import sys
 from pathlib import Path
 
+import httpx
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "server"))
 
@@ -33,24 +35,24 @@ from config import (  # noqa: E402
 from db import list_documents, set_document_status  # noqa: E402
 from pdf.digest import build_knowledge_context  # noqa: E402
 from pdf.ingest import ingest_document  # noqa: E402
+from pdf.sources import CURRICULUM_SOURCES, ready_curriculum_document_ids  # noqa: E402
 from prompt import build_system_prompt  # noqa: E402
 from storage import StorageClient  # noqa: E402
 
 CARTILLAS = ROOT / "cartillas"
 
-# `Info_Evento_Curriculo_Verde_Ampliado.pdf` is deliberately absent: the agenda
-# and minute-by-minute documents superseded it, and re-ingesting it would put
-# stale event details back in front of the model.
-SOURCES = [
-    "Introduccion_Curriculo_Verde.docx",
-    "2_Modulo1_HabilidadesVerdes.docx",
-    "3_Modulo2_HabilidadesVerdes.docx",
-    "4_Modulo3_HabilidadesVerdes.docx",
-    "5_Modulo4_HabilidadesVerdes.docx",
-    "6_Modulo5_HabilidadesVerdes.docx",
-    "Agenda_Lanzamiento_Curriculo_Verde.docx",
-    "Minuto_a_Minuto_Lanzamiento_Curriculo_Verde.docx",
-]
+SOURCES = CURRICULUM_SOURCES
+
+
+async def deactivate_document(document_id: str, message: str) -> None:
+    """Keep a document out of Live sessions, including on older DB schemas."""
+    try:
+        await set_document_status(document_id, "archived", message=message)
+    except httpx.HTTPStatusError as exc:
+        # Migration 004 may not yet be available on the remote database.
+        if exc.response.status_code != 400 or exc.response.json().get("code") != "23514":
+            raise
+        await set_document_status(document_id, "error", message=message)
 
 
 async def show_state() -> list[dict]:
@@ -80,18 +82,18 @@ async def reload(apply: bool) -> None:
     print(f"\n=== Plan ({'APLICAR' if apply else 'simulacion'}) ===")
     for name in SOURCES:
         existing = by_name.get(name, [])
-        live = [d for d in existing if d["status"] != "archived"]
+        live = [d for d in existing if d["status"] == "ready"]
         print(
             f"  {name:<52} "
-            f"{'reingesta, archiva ' + str(len(live)) + ' fila(s)' if live else 'ingesta nueva'}"
+            f"{'reingesta, desactiva ' + str(len(live)) + ' fila(s)' if live else 'ingesta nueva'}"
         )
     orphans = [
         d
         for d in docs
-        if d["name"] not in SOURCES and d["status"] != "archived"
+        if d["name"] not in SOURCES and d["status"] == "ready"
     ]
     for d in orphans:
-        print(f"  {d['name']:<52} archivar (ya no es fuente canonica)")
+        print(f"  {d['name']:<52} desactivar (ya no es fuente canonica)")
 
     if not apply:
         print("\n(simulacion: no se escribio nada. Repite con --apply)")
@@ -114,25 +116,21 @@ async def reload(apply: bool) -> None:
         # Only archive the old rows once the replacement is stored, so a failure
         # halfway through never leaves the model with no copy of a cartilla.
         for old in by_name.get(name, []):
-            if old["status"] == "archived":
+            if old["status"] != "ready":
                 continue
-            await set_document_status(
-                old["id"], "archived", message=f"Reemplazado por reingesta de {name}"
-            )
-            print(f"   archivada fila anterior {old['id']}")
+            await deactivate_document(old["id"], f"Reemplazado por reingesta de {name}")
+            print(f"   desactivada fila anterior {old['id']}")
 
     for d in orphans:
-        await set_document_status(
-            d["id"], "archived", message="No forma parte de las fuentes canonicas"
-        )
-        print(f"-> archivado {d['name']}")
+        await deactivate_document(d["id"], "No forma parte de las fuentes canonicas")
+        print(f"-> desactivado {d['name']}")
 
     await show_state()
 
 
 async def show_prompt(out: str | None) -> None:
     docs = await list_documents()
-    ready = [d["id"] for d in docs if d["status"] == "ready"]
+    ready = ready_curriculum_document_ids(docs)
     knowledge = await build_knowledge_context(ready)
     prompt = build_system_prompt(knowledge)
     if out:

@@ -15,6 +15,7 @@ from db import get_document, list_documents, delete_document, set_document_statu
 from storage import StorageClient
 from pdf.ingest import ingest_document
 from pdf.models import DocumentOut, IngestResponse, ActivateResponse
+from pdf.sources import is_curriculum_source, ready_curriculum_document_ids
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,7 @@ async def unarchive_doc(doc_id: str):
     if not doc:
         raise HTTPException(404, "Document not found")
     await set_document_status(doc_id, "ready", message="")
-    if doc_id not in _active_documents:
+    if is_curriculum_source(doc["name"]) and doc_id not in _active_documents:
         _active_documents.append(doc_id)
     logger.info("[pdf] unarchived document %s (%s)", doc_id, doc["name"])
     return {"ok": True, "document_id": doc_id, "status": "ready"}
@@ -128,6 +129,8 @@ async def activate_doc(doc_id: str):
         raise HTTPException(404, "Document not found")
     if doc["status"] != "ready":
         raise HTTPException(400, "Document is not ready")
+    if not is_curriculum_source(doc["name"]):
+        raise HTTPException(400, "Document is not a curriculum source")
     if doc_id not in _active_documents:
         _active_documents.append(doc_id)
     logger.info("[pdf] activated document %s (%s)", doc_id, doc["name"])
@@ -140,7 +143,7 @@ async def activate_doc(doc_id: str):
 @router.post("/activate-all")
 async def activate_all():
     docs = await list_documents()
-    ready = [d["id"] for d in docs if d["status"] == "ready"]
+    ready = ready_curriculum_document_ids(docs)
     if not ready:
         raise HTTPException(400, "No documents available to activate")
     set_active_documents(ready)

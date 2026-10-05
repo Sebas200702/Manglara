@@ -3,13 +3,9 @@ import {
   BookOpen,
   ChevronRight,
   Compass,
-  Cpu,
   Globe,
   Info,
-  Layers,
-  Sparkles,
   TrendingUp,
-  User,
   Users,
 } from "lucide-react";
 import { Logo } from "../../../components/brand/logo";
@@ -18,9 +14,7 @@ import { Logo } from "../../../components/brand/logo";
 export interface ModuleData {
   id: number;
   title: string;
-  standName: string;
-  responsable?: string;
-  experience: string;
+  description: string;
   color: string;
   bgColor: string;
   borderColor: string;
@@ -30,10 +24,8 @@ export interface ModuleData {
 export const MODULES: ModuleData[] = [
   {
     id: 1,
-    title: "Módulo 1: Habilidades Verdes",
-    standName: "Stand 01: MANGLARÍA",
-    responsable: "Jorge Luis Díaz Martínez",
-    experience: "Experiencia inmersiva con gafas de IA sobre el ecosistema del manglar.",
+    title: "Módulo 1: Cambio climático y problemas ambientales",
+    description: "Comprende las causas del cambio climático y sus efectos en la vida cotidiana, el territorio y las comunidades.",
     color: "text-brand-600",
     bgColor: "bg-brand-50/50",
     borderColor: "border-brand-200",
@@ -41,10 +33,8 @@ export const MODULES: ModuleData[] = [
   },
   {
     id: 2,
-    title: "Módulo 2: Conciencia Ambiental",
-    standName: "Stand 02: Simulación de Mercado",
-    responsable: "Rafael Portacio",
-    experience: "Formación de opinión crítica y expresión consciente ante problemáticas reales.",
+    title: "Módulo 2: Sostenibilidad y economía circular",
+    description: "Explora la reducción de residuos, la biodiversidad y la resiliencia de las comunidades.",
     color: "text-navy-600",
     bgColor: "bg-navy-50/50",
     borderColor: "border-navy-200",
@@ -52,9 +42,8 @@ export const MODULES: ModuleData[] = [
   },
   {
     id: 3,
-    title: "Módulo 3: Incidencia",
-    standName: "Stand 03: Juego de Memoria",
-    experience: "Encuentra parejas de decisiones cotidianas vs. su impacto ambiental real.",
+    title: "Módulo 3: Vida ecológica cotidiana",
+    description: "Relaciona alimentación, agua, energía, movilidad y consumo con decisiones sostenibles posibles.",
     color: "text-accent-500",
     bgColor: "bg-accent-50/50",
     borderColor: "border-accent-200",
@@ -62,9 +51,8 @@ export const MODULES: ModuleData[] = [
   },
   {
     id: 4,
-    title: "Módulo 4: Comunicación",
-    standName: "Stand 05: Actividad Lúdica",
-    experience: "Dinámica grupal de comunicación asertiva articulada con los materiales del Currículo.",
+    title: "Módulo 4: Comunicación y acción comunitaria",
+    description: "Aprende a comunicar ideas, crear campañas y participar en soluciones colectivas con enfoque de justicia climática.",
     color: "text-brand-500",
     bgColor: "bg-[#fcfdec]",
     borderColor: "border-brand-200",
@@ -72,10 +60,8 @@ export const MODULES: ModuleData[] = [
   },
   {
     id: 5,
-    title: "Módulo 5: Oportunidades Económicas Verdes",
-    standName: "Stand 04: Ruleta del Manglar",
-    responsable: "Jenifer Yance",
-    experience: "Juego de simulación estilo monopolio sobre emprendimiento y finanzas verdes.",
+    title: "Módulo 5: Innovación y empleos sostenibles",
+    description: "Conoce opciones de empleo verde, emprendimiento y herramientas para construir un proyecto de vida sostenible.",
     color: "text-accent-600",
     bgColor: "bg-accent-50/30",
     borderColor: "border-accent-200",
@@ -122,7 +108,7 @@ export function LobbyResources() {
             <div className="p-3 bg-brand-50 border border-brand-100 rounded-xl flex gap-2.5 items-start">
               <Info className="size-4 text-brand-600 shrink-0 mt-0.5" />
               <p className="text-xs text-brand-800 leading-relaxed">
-                El <strong>Currículo Verde</strong> integra estas 5 áreas en stands experienciales diseñados para el evento de lanzamiento.
+                El currículo <strong>Habilidades Verdes para la Vida</strong> se organiza en cinco módulos que conectan la sostenibilidad con la vida cotidiana.
               </p>
             </div>
 
@@ -145,9 +131,6 @@ export function LobbyResources() {
                           <h3 className="text-xs font-bold text-neutral-900 leading-tight">
                             {mod.title}
                           </h3>
-                          <span className="inline-block mt-1 text-[10px] font-semibold text-neutral-500 px-2 py-0.5 bg-white/70 border border-neutral-150 rounded-md">
-                            {mod.standName}
-                          </span>
                         </div>
                       </div>
                       <ChevronRight className="size-4 text-neutral-400 self-center" />
@@ -237,7 +220,7 @@ export function LobbyResources() {
 
                   <div className="z-10 mt-auto flex flex-col gap-1.5">
                     <span className="text-[8px] font-extrabold text-navy-600 leading-tight block">
-                      Mi recorrido hacia un futuro sostenible
+                      Mi camino hacia un futuro sostenible
                     </span>
                     {/* Tiny logos container */}
                     <div className="flex gap-1 h-3 opacity-60 scale-75 origin-left">
@@ -267,20 +250,9 @@ export function LobbyResources() {
               {selectedModule.title}
             </h3>
             
-            <div className="text-xs font-bold text-brand-600 bg-brand-50 inline-block px-2.5 py-1 rounded-md mb-4 border border-brand-100">
-              {selectedModule.standName}
-            </div>
-
-            {selectedModule.responsable && (
-              <div className="flex items-center gap-2 mb-3 text-xs text-neutral-600 bg-neutral-50 p-2 rounded-lg border border-neutral-150">
-                <User className="size-3.5 text-neutral-400 shrink-0" />
-                <span>Responsable: <strong>{selectedModule.responsable}</strong></span>
-              </div>
-            )}
-
             <div className="text-xs text-neutral-700 leading-relaxed mb-5">
-              <span className="block font-bold text-neutral-500 uppercase text-[9px] mb-1 tracking-wider">Experiencia en Stand:</span>
-              <p>{selectedModule.experience}</p>
+              <span className="block font-bold text-neutral-500 uppercase text-[9px] mb-1 tracking-wider">Sobre este módulo:</span>
+              <p>{selectedModule.description}</p>
             </div>
 
             <button

@@ -65,6 +65,9 @@ Requisito adicional (solo el navegador, una vez):
 python -m playwright install chromium
 ```
 
+> En Render el build ya instala Chromium (`render.yaml`), pero el plan free
+> no tiene RAM/disco suficiente: usar plan starter o self-host.
+
 Plan de implementación completo: `docs/plan-meeting-bot.md`.
 
 ## Build producción

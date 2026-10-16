@@ -5,7 +5,8 @@ services:
     region: oregon
     plan: free
     rootDir: server
-    buildCommand: pip install -r requirements.txt
+    # Chromium (~400 MB) no cabe en el plan free: usar starter o self-host.
+    buildCommand: pip install -r requirements.txt && python -m playwright install --with-deps chromium
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:

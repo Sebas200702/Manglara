@@ -23,3 +23,11 @@ services:
         sync: false
       - key: SUPABASE_STORAGE_BUCKET
         value: documents
+      - key: MEETING_BOT_NAME
+        value: Manglara
+      - key: MEETING_HEADLESS
+        value: "true"
+      - key: MEETING_MAX_DURATION_MIN
+        value: "180"
+      - key: MEETING_AVATAR_URL
+        value: /meeting/avatar

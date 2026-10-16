@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import PORT
 from db import list_documents
 from gemini_client import GeminiLiveClient
+from meeting.router import router as meeting_router, ws_router as meeting_ws_router
 from pdf.digest import backfill_digests, build_knowledge_context
 from pdf.router import router as pdf_router, get_active_documents, set_active_documents
 from pdf.retrieval import retrieve_context
@@ -58,6 +59,8 @@ app.add_middleware(
 )
 
 app.include_router(pdf_router)
+app.include_router(meeting_router)
+app.include_router(meeting_ws_router)
 
 
 @app.get("/health")

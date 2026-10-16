@@ -55,6 +55,18 @@ bun run --filter web dev
 3. El avatar cambia entre escuchando / pensando / hablando
 4. En DevTools → Network: no debe haber requests a `generativelanguage.googleapis.com` desde el browser
 
+## Reuniones externas (Live Meeting con Manglara)
+
+Manglara puede unirse a reuniones externas de Teams, Zoom y Google Meet como participante (escucha y habla). El bot corre Chromium headless desde el backend, así que no necesita drivers de audio en tu máquina.
+
+Requisito adicional (solo el navegador, una vez):
+
+```bash
+python -m playwright install chromium
+```
+
+Plan de implementación completo: `docs/plan-meeting-bot.md`.
+
 ## Build producción
 
 ```bash

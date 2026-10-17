@@ -1,8 +1,8 @@
 import { NavLink } from "react-router-dom";
 
 const SECTIONS = [
-  { to: "/", label: "Llamada 1:1" },
-  { to: "/reunion", label: "Reunión" },
+  { to: "/", label: "Llamada 1:1", short: "1:1" },
+  { to: "/reunion", label: "Reunión", short: "Reunión" },
 ] as const;
 
 interface SectionNavProps {
@@ -31,7 +31,7 @@ export function SectionNav({ locked = false, lockedReason }: SectionNavProps) {
             if (locked) e.preventDefault();
           }}
           className={({ isActive }) =>
-            `rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide transition-all ${
+            `whitespace-nowrap rounded-full px-2.5 sm:px-3 py-1 text-[11px] font-bold uppercase tracking-wide transition-all ${
               isActive
                 ? "bg-white text-navy-600 shadow-2xs border border-neutral-200"
                 : locked
@@ -40,7 +40,8 @@ export function SectionNav({ locked = false, lockedReason }: SectionNavProps) {
             }`
           }
         >
-          {section.label}
+          <span className="sm:hidden">{section.short}</span>
+          <span className="hidden sm:inline">{section.label}</span>
         </NavLink>
       ))}
     </nav>

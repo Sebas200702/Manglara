@@ -51,7 +51,7 @@ export function CallScreen() {
       {/* Header Bar */}
       <header className="flex h-16 shrink-0 items-center justify-between border-b border-neutral-200/80 bg-white px-4 sm:px-6 z-20 shadow-2xs">
         <div className="flex items-center gap-3">
-          <Logo />
+          <Logo className="shrink-0" />
           <span className="h-5 w-[1px] bg-neutral-200 hidden sm:inline" />
           <span className="text-xs font-bold text-neutral-400 uppercase tracking-widest mt-0.5 hidden sm:inline">
             Llamada virtual con Manglara
@@ -82,7 +82,7 @@ export function CallScreen() {
                   : "bg-brand-400"
               }`}
             />
-            {inCall ? statusLabel : "Listo para hablar"}
+            <span className="hidden sm:inline">{inCall ? statusLabel : "Listo para hablar"}</span>
           </span>
         </div>
       </header>

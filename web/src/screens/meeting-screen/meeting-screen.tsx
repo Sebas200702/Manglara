@@ -99,9 +99,9 @@ export function MeetingScreen() {
       {/* Header */}
       <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-neutral-200/80 bg-white px-4 sm:px-6 z-20 shadow-2xs">
         <div className="flex items-center gap-3 min-w-0">
-          <Logo />
-          <span className="h-5 w-[1px] bg-neutral-200 hidden md:inline" />
-          <span className="text-xs font-bold text-neutral-400 uppercase tracking-widest mt-0.5 hidden md:inline truncate">
+          <Logo className="shrink-0" />
+          <span className="h-5 w-[1px] bg-neutral-200 hidden xl:inline" />
+          <span className="text-xs font-bold text-neutral-400 uppercase tracking-widest mt-0.5 hidden xl:inline truncate">
             Live Meeting con Manglara
           </span>
         </div>
@@ -109,7 +109,7 @@ export function MeetingScreen() {
         <div className="flex items-center gap-2">
           <SectionNav />
           <span
-            className={`hidden sm:inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition-all border ${chip.chip}`}
+            className={`hidden lg:inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold whitespace-nowrap transition-all border ${chip.chip}`}
           >
             <span className={`size-2 rounded-full ${chip.dot}`} />
             {status.label}
@@ -135,7 +135,7 @@ export function MeetingScreen() {
                     Conectar a una reunión
                   </h1>
                   <span
-                    className={`inline-flex sm:hidden items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold border ${chip.chip}`}
+                    className={`inline-flex lg:hidden items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold border ${chip.chip}`}
                   >
                     <span className={`size-1.5 rounded-full ${chip.dot}`} />
                     {status.label}

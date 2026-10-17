@@ -128,8 +128,14 @@ class MeetingBrowser:
 
         await self._context.grant_permissions(["microphone", "camera"])
         await self._context.add_init_script(init_script)
-        self.page = await self._context.new_page()
-        logger.info("[meeting] browser listo (headless=%s)", MEETING_HEADLESS)
+        # El contexto persistente abre con una pestaña en blanco: reusarla.
+        pages = self._context.pages
+        self.page = pages[0] if pages else await self._context.new_page()
+        logger.info(
+            "[meeting] browser listo (headless=%s, perfil=%s)",
+            MEETING_HEADLESS,
+            "logueado" if MEETING_CHROME_PROFILE_DIR else "invitado",
+        )
 
     async def close(self):
         if self._context:

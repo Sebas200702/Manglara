@@ -5,9 +5,11 @@ La UI nunca habla con el browser: todos los comandos pasan por aquí.
 
 import asyncio
 import logging
+import re
+import secrets
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from config import MEETING_BOT_NAME
 from .bridge import BRIDGES, MeetingBridge
@@ -46,9 +48,22 @@ def _prune_finished():
         SUBS.pop(s.id, None)
 
 
+# El WS interno solo acepta la página del Chromium local.
+_LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+
+
 class JoinRequest(BaseModel):
     input: str = Field(..., min_length=3, max_length=500)
     name: str | None = Field(default=None, max_length=50)
+
+    @field_validator("name")
+    @classmethod
+    def _clean_name(cls, v: str | None) -> str | None:
+        # Se escribe en la UI de la reunión: sin caracteres de control.
+        if v is None:
+            return None
+        v = re.sub(r"[\x00-\x1f\x7f]", "", v).strip()
+        return v or None
 
 
 class MediaToggle(BaseModel):
@@ -210,10 +225,17 @@ async def ws_meeting_ui(ws: WebSocket, session_id: str):
 
 @ws_router.websocket("/ws/meetings/{session_id}/bridge")
 async def ws_meeting_bridge(ws: WebSocket, session_id: str):
-    """WS interno: solo la página inyectada del browser."""
-    try:
-        bridge = BRIDGES[session_id]
-    except KeyError:
+    """WS interno: solo la página inyectada del browser (token + loopback)."""
+    bridge = BRIDGES.get(session_id)
+    if bridge is None:
         await ws.close(code=4404)
+        return
+    token = ws.query_params.get("token", "")
+    host = ws.client.host if ws.client else ""
+    if host not in _LOOPBACK or not secrets.compare_digest(
+        token, bridge.session.bridge_token
+    ):
+        logger.warning("[meetings] WS interno rechazado (%s)", session_id[:8])
+        await ws.close(code=4403)
         return
     await bridge.handle_bridge_ws(ws)

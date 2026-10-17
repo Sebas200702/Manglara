@@ -16,6 +16,9 @@ services:
         value: models/gemini-3.1-flash-live-preview
       - key: GEMINI_VOICE_NAME
         value: Zephyr
+      # Web desplegada (la pantalla /reunion llama a la API REST).
+      - key: CORS_ALLOW_ORIGINS
+        sync: false
       - key: SUPABASE_DB_URL
         sync: false
       - key: SUPABASE_URL

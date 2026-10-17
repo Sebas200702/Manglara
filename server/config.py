@@ -27,6 +27,14 @@ GEMINI_DIGEST_MODEL = os.getenv("GEMINI_DIGEST_MODEL", "models/gemini-3.5-flash"
 GEMINI_VOICE_NAME = os.getenv("GEMINI_VOICE_NAME", "Zephyr")
 PORT = int(os.getenv("PORT", "3000"))
 
+# Orígenes extra del frontend con permiso CORS (coma-separados), p. ej. la web
+# desplegada: la pantalla de reuniones llama a la API REST del backend.
+CORS_ALLOW_ORIGINS = [
+    o.strip().rstrip("/")
+    for o in os.getenv("CORS_ALLOW_ORIGINS", "").split(",")
+    if o.strip()
+]
+
 SUPABASE_URL = _require("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = _require("SUPABASE_SERVICE_KEY")
 SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "documents")

@@ -76,7 +76,7 @@ async def poll_with_selectors(page, selectors: dict) -> str:
             selectors,
         )
     except Exception as e:
-        logger.warning("[recipe] poll falló: %s", e)
+        logger.warning("[recipe] poll falló: %s", type(e).__name__)
         return "unknown"
 
 

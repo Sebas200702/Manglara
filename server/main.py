@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from config import PORT
+from config import CORS_ALLOW_ORIGINS, MEETING_WEB_URL, PORT
 from db import list_documents
 from gemini_client import GeminiLiveClient
 from meeting.router import router as meeting_router, ws_router as meeting_ws_router
@@ -51,9 +51,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+cors_origins = ["http://localhost:5173", "http://127.0.0.1:5173", *CORS_ALLOW_ORIGINS]
+if MEETING_WEB_URL and MEETING_WEB_URL not in cors_origins:
+    cors_origins.append(MEETING_WEB_URL)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

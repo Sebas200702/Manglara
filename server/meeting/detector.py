@@ -111,6 +111,18 @@ def normalize(provider: Provider, raw: str) -> str:
     raise UnsupportedMeetingUrl(f"ID no válido para {provider}")
 
 
+_URL_IN_TEXT = re.compile(r"https?://([^/\s\"'<>]+)[^\s\"'<>]*", re.I)
+
+
+def redact_urls(text: str) -> str:
+    """Reemplaza URLs por solo su dominio (para logs y mensajes de error).
+
+    Los links de reunión llevan IDs y contraseñas (`pwd`); las excepciones de
+    Playwright los incluyen completos ("navigating to https://...").
+    """
+    return _URL_IN_TEXT.sub(lambda m: f"https://{m.group(1)}/…", text or "")
+
+
 def detect_and_normalize(raw: str) -> tuple[Provider, str]:
     """Atajo: detecta el proveedor y devuelve (provider, url_canónica)."""
     provider = detect(raw)

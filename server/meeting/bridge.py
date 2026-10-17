@@ -20,6 +20,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from config import MEETING_ALONE_TIMEOUT_MIN, MEETING_MAX_DURATION_MIN, PORT
 from .brain import MeetingBrain
 from .browser import MeetingBrowser
+from .detector import redact_urls
 from .models import EndReason, MeetingSession
 
 if TYPE_CHECKING:
@@ -89,7 +90,10 @@ class MeetingBridge:
         try:
             self._set_bridge("launching")
             await self._emit()
-            ws_url = f"ws://127.0.0.1:{PORT}/ws/meetings/{s.id}/bridge"
+            ws_url = (
+                f"ws://127.0.0.1:{PORT}/ws/meetings/{s.id}/bridge"
+                f"?token={s.bridge_token}"
+            )
             await self.browser.launch(ws_url, s.id, self.recipe.selectors)
             # Mic falso arranca mudo: entra dormida por defecto.
             await self._send_control({"type": "set_mic", "enabled": False})
@@ -120,7 +124,9 @@ class MeetingBridge:
             if self.browser.lost_reason:
                 await self._fail(self._lost_message())
             else:
-                logger.exception("[meeting] %s error inesperado", s.id[:8])
+                # Sin traceback en INFO: los mensajes de Playwright traen la
+                # URL de la reunión (redactada abajo); el detalle va en DEBUG.
+                logger.debug("[meeting] %s traceback", s.id[:8], exc_info=True)
                 await self._fail(f"Error inesperado: {e}")
         finally:
             await self._cleanup()
@@ -143,7 +149,7 @@ class MeetingBridge:
             return
         self._closing = True
         await self.brain_stop(emit=False)
-        s.error = message[:300]
+        s.error = redact_urls(message)[:300]
         self._set_bridge("error")
         logger.error("[meeting] %s: %s", s.id[:8], s.error)
         await self._emit()
@@ -166,7 +172,7 @@ class MeetingBridge:
             try:
                 state = await self.recipe.poll_state(self.browser.page)
             except Exception as e:
-                logger.warning("[meeting] poll falló: %s", e)
+                logger.warning("[meeting] poll falló: %s", redact_urls(str(e)))
                 continue
             if state == "in_meeting" and s.bridge != "in_meeting":
                 self._set_bridge("in_meeting")
@@ -246,7 +252,9 @@ class MeetingBridge:
                 try:
                     await self.recipe.leave(self.browser.page)
                 except Exception as e:
-                    logger.warning("[meeting] recipe.leave falló: %s", e)
+                    logger.warning(
+                        "[meeting] recipe.leave falló: %s", redact_urls(str(e))
+                    )
         finally:
             if self.session.bridge != "error":
                 self._set_bridge("closed")
@@ -357,7 +365,7 @@ class MeetingBridge:
         try:
             await self.recipe.set_mic(self.browser.page, enabled)
         except Exception as e:
-            logger.warning("[meeting] set_mic receta falló: %s", e)
+            logger.warning("[meeting] set_mic receta falló: %s", redact_urls(str(e)))
         if emit:
             await self._emit()
 
@@ -367,7 +375,7 @@ class MeetingBridge:
         try:
             await self.recipe.set_cam(self.browser.page, enabled)
         except Exception as e:
-            logger.warning("[meeting] set_cam receta falló: %s", e)
+            logger.warning("[meeting] set_cam receta falló: %s", redact_urls(str(e)))
         await self._emit()
 
     # -- WS interno (página inyectada <-> backend) -----------------------------

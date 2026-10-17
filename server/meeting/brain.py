@@ -92,6 +92,7 @@ class MeetingBrain:
 
     async def _connect(self, greet: bool):
         gemini = GeminiLiveClient()
+        gemini.log_transcripts = False  # privacidad de los participantes
         gemini.transcript_callback = self._handle_transcript
         gemini.turn_complete_callback = self._on_turn_complete
         gemini.interrupt_callback = self._handle_interrupted

@@ -12,6 +12,7 @@ from detector import (  # noqa: E402
     detect,
     normalize,
     detect_and_normalize,
+    redact_urls,
     UnsupportedMeetingUrl,
 )
 
@@ -104,6 +105,16 @@ def t_wrong_provider():
         lambda: normalize("meet", "https://zoom.us/j/123456789"),
     )
     must_raise(lambda: normalize("teams", "123456789"))
+
+
+
+def t_redact_urls():
+    out = redact_urls(
+        'navigating to "https://zoom.us/wc/81234567890/join?pwd=SECRET", waiting'
+    )
+    assert "SECRET" not in out and "81234567890" not in out, out
+    assert "https://zoom.us/" in out, out
+    assert redact_urls("sin urls") == "sin urls"
 
 
 if __name__ == "__main__":

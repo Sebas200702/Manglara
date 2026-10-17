@@ -1,5 +1,6 @@
 """Modelos de sesión del bot de reuniones. Solo datos, sin lógica."""
 
+import secrets
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -43,6 +44,9 @@ EndReason = Literal[
 @dataclass
 class MeetingSession:
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    # Secreto del WS interno (solo la página inyectada lo conoce). El id es
+    # público (GET /meetings), así que no basta para autenticar el WS.
+    bridge_token: str = field(default_factory=lambda: secrets.token_urlsafe(24))
     provider: Provider = "teams"
     url: str = ""
     name: str = "Manglara"
@@ -56,7 +60,7 @@ class MeetingSession:
     ended_at: float | None = None
 
     def public_state(self) -> dict:
-        """Lo que la UI necesita. Sin URLs completas (privacidad)."""
+        """Lo que la UI necesita. Sin URL ni token (privacidad/seguridad)."""
         return {
             "id": self.id,
             "provider": self.provider,

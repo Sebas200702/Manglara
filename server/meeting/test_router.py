@@ -7,7 +7,7 @@ Se corren sin pytest ni Chromium, desde `server/`:
 
 import asyncio
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from meeting import router as router_mod
@@ -64,6 +64,19 @@ def main():
         print("listado de debug")
         r = client.get("/meetings")
         check(r.json()["active"] == first, "reporta la activa")
+
+        print("WS interno protegido")
+        check("bridge_token" not in r.text, "el listado no expone el token")
+        for path in (
+            f"/ws/meetings/{first}/bridge",
+            f"/ws/meetings/{first}/bridge?token=adivinado",
+        ):
+            try:
+                with client.websocket_connect(path) as ws:
+                    ws.receive_text()
+                check(False, "debía rechazar")
+            except WebSocketDisconnect as e:
+                check(e.code == 4403, f"rechaza {path.split('/')[-1]}")
 
         print("leave libera el cupo")
         r = client.post(f"/meetings/{first}/leave")

@@ -189,12 +189,13 @@ async def ingest_document(
         storage_path = f"{uuid.uuid4()}/{filename}"
         await storage.upload(storage_path, file_data)
 
-        doc_id = await insert_document(
+        doc = await insert_document(
             name=filename,
             storage_path=storage_path,
             page_count=len(pages),
             file_uri=file_uri,
         )
+        doc_id = doc["id"]
 
         db_chunks = [
             {

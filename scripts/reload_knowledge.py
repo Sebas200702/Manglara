@@ -32,7 +32,7 @@ from config import (  # noqa: E402
     SUPABASE_STORAGE_BUCKET,
     SUPABASE_URL,
 )
-from db import list_documents, set_document_status  # noqa: E402
+from db import activate_document, list_documents, set_document_status  # noqa: E402
 from pdf.digest import build_knowledge_context  # noqa: E402
 from pdf.ingest import ingest_document  # noqa: E402
 from pdf.sources import CURRENT_SOURCES, active_document_ids  # noqa: E402
@@ -113,6 +113,9 @@ async def reload(apply: bool) -> None:
             f"   ok: {result['chunks_count']} chunks, {result['pages']} paginas, "
             f"id={result['document_id']}"
         )
+        # El panel respeta documents.active: una reingesta canónica se activa
+        # sola (era lo que hacía el allowlist de sources.py).
+        await activate_document(result["document_id"])
         # Only archive the old rows once the replacement is stored, so a failure
         # halfway through never leaves the model with no copy of a cartilla.
         for old in by_name.get(name, []):

@@ -79,12 +79,13 @@ async def main():
             await storage.upload(storage_path, data)
             logger.info("  uploaded to Supabase Storage")
 
-            doc_id = await insert_document(
+            doc = await insert_document(
                 name=fp.name,
                 storage_path=storage_path,
                 page_count=len(pages),
                 file_uri=file_uri,
             )
+            doc_id = doc["id"]
 
             db_chunks = [
                 {

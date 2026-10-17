@@ -70,3 +70,22 @@ bun run --filter server start
 | `GEMINI_LIVE_MODEL` | Modelo Live (default: gemini-3.1-flash-live-preview) |
 | `GEMINI_VOICE_NAME` | Voz predefinida (default: Zephyr) |
 | `PORT` | Puerto del backend (default: 3000) |
+
+## Panel de conocimiento
+
+Gestión de cartillas sin tocar código: `/conocimiento` (clave única del
+gestor, cookie de sesión de 12 h). Ver `docs/conocimiento-runbook.md`
+para el flujo completo, el reciclaje de clave y la operativa de backup.
+
+Variables nuevas (todas opcionales excepto la clave del gestor):
+
+| Variable | Descripción |
+|----------|-------------|
+| `ADMIN_PASSWORD_HASH` | Clave del panel en `scrypt:N:r:p:salt:hash` (genera con `python scripts/hash_password.py`) |
+| `ADMIN_PASSWORD` | Alternativa en claro (no recomendado; se ignora si hay hash) |
+| `SESSION_SECRET` | Firma de la cookie; si falta, se deriva de la clave |
+| `SESSION_TTL_HOURS` | Horas de sesión (default: 12) |
+| `LOGIN_ATTEMPTS_PER_MINUTE` | Rate limit del login (default: 5) |
+| `GEMINI_EMBEDDING_MODEL` | Embeddings (default: gemini-embedding-2) |
+| `GEMINI_EMBEDDING_DIM` | Dimensión del vector (default: 384, coincide con `vector(384)`) |
+

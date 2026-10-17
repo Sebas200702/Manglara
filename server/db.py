@@ -16,20 +16,32 @@ HEADERS = {
 
 
 async def insert_document(
-    name: str, storage_path: str, page_count: int, file_uri: str | None = None
-) -> str:
+    name: str,
+    storage_path: str,
+    page_count: int | None = None,
+    file_uri: str | None = None,
+    status: str = "ready",
+    active: bool = False,
+    origin: str = "api",
+) -> dict:
+    """Crea la fila de documento y devuelve el registro completo.
+
+    active=False por defecto: la activación la decide el gestor en el
+    panel (documents.active es LA fuente de verdad, migración 006).
+    """
     payload = {
         "name": name,
         "storage_path": storage_path,
         "page_count": page_count,
         "file_uri": file_uri,
-        "status": "ready",
+        "status": status,
+        "active": active,
+        "origin": origin,
     }
     async with httpx.AsyncClient() as client:
         resp = await client.post(f"{BASE}/documents", json=payload, headers=HEADERS)
         resp.raise_for_status()
-        data = resp.json()
-        return data[0]["id"]
+        return resp.json()[0]
 
 
 async def insert_chunks(chunks: list[dict]):
@@ -153,6 +165,11 @@ async def delete_document(document_id: str) -> bool:
 
 
 # --- gestión de conocimiento (migración 006) --------------------------
+
+async def activate_document(document_id: str) -> None:
+    """Enciende documents.active (fuente de verdad para las sesiones)."""
+    await update_document_fields(document_id, {"active": True})
+
 
 async def list_active_documents() -> list[dict]:
     """Filas activas y activas en orden — reemplaza el allowlist hardcodeado

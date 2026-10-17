@@ -22,7 +22,7 @@ def assemble_context(chunks: list[dict], max_chars: int = 4000) -> str:
 
 
 async def retrieve_context(
-    document_ids: str | list[str], query: str, top_k: int = 5
+    document_ids: str | list[str], query: str, top_k: int = 8
 ) -> str:
     # Ya no hay modelo ONNX local: el embedding es una llamada de red vía
     # `embed_texts()`, y se espera directamente en el event loop (no bloquea

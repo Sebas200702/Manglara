@@ -1,6 +1,13 @@
-"""Documents that may provide knowledge to Manglara's curriculum conversations."""
+"""Fuente de verdad del conocimiento activo: la BD (documents.active),
+no un allowlist de filenames ni el estado en memoria del proceso.
 
-CURRICULUM_SOURCES = (
+El orden de lectura del prompt lo fija documents.sort_order. La lista
+canónica de archivos en disco (`cartillas/`) se conserva para el script
+de re-ingesta, porque él necesita saber QUÉ archivos abrir; no puede
+decir qué entra en la sesión (eso lo decide el gestor en la BD).
+"""
+
+CURRENT_SOURCES = (
     "Introduccion_Curriculo_Verde.docx",
     "2_Modulo1_HabilidadesVerdes.docx",
     "3_Modulo2_HabilidadesVerdes.docx",
@@ -10,13 +17,9 @@ CURRICULUM_SOURCES = (
 )
 
 
-def is_curriculum_source(name: str) -> bool:
-    return name in CURRICULUM_SOURCES
-
-
-def ready_curriculum_document_ids(documents: list[dict]) -> list[str]:
+def active_document_ids(documents: list[dict]) -> list[str]:
     return [
-        document["id"]
-        for document in documents
-        if document["status"] == "ready" and is_curriculum_source(document["name"])
+        d["id"]
+        for d in documents
+        if d.get("active") and d.get("status") == "ready"
     ]

@@ -1,139 +1,85 @@
+"""Endpoints legacy /api/documents/* — ahora PROTEGIDOS por la cookie del
+gestor y con la verdad en la BD (documents.active), no en memoria.
+
+El flujo de subida vive en knowledge/router.py (jobs reanudables con
+subida directa a Storage): por una función de Vercel no pasa un archivo
+grande — el límite del cuerpo de una función es 4.5MB (413 en 18MB).
+"""
+
 import logging
-from pathlib import Path
 
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
-from google import genai as genai_module
-
-from config import (
-    SUPABASE_URL,
-    SUPABASE_SERVICE_KEY,
-    SUPABASE_STORAGE_BUCKET,
-    GEMINI_API_KEY,
-)
-from db import get_document, list_documents, delete_document, set_document_status
-from storage import StorageClient
-from pdf.ingest import ingest_document
-from pdf.models import DocumentOut, IngestResponse, ActivateResponse
-from pdf.sources import is_curriculum_source, ready_curriculum_document_ids
+import db
+import knowledge.auth as auth
+from pdf.models import ActivateResponse, DocumentOut
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx"}
-
-router = APIRouter(prefix="/api/documents", tags=["documents"])
-
-_active_documents: list[str] = []
+router = APIRouter(prefix="/api/documents", tags=["documents"],
+                   dependencies=[Depends(auth.require_admin)])
 
 
-def get_active_documents() -> list[str]:
-    return _active_documents
-
-
-def set_active_documents(doc_ids: list[str]):
-    global _active_documents
-    _active_documents = doc_ids
+def _out(doc: dict) -> DocumentOut:
+    keys = set(DocumentOut.model_fields)
+    return DocumentOut(**{k: doc.get(k) for k in keys})
 
 
 @router.get("")
 async def list_docs():
-    docs = await list_documents()
-    return [DocumentOut(**d) for d in docs]
+    docs = await db.list_documents()
+    return [_out(d) for d in docs]
 
 
 @router.get("/{doc_id}")
 async def get_doc(doc_id: str):
-    doc = await get_document(doc_id)
+    doc = await db.get_document(doc_id)
     if not doc:
-        raise HTTPException(404, "Document not found")
-    return DocumentOut(**doc)
+        raise HTTPException(status_code=404, detail="Document not found")
+    return _out(doc)
 
 
 @router.delete("/{doc_id}")
 async def delete_doc(doc_id: str):
-    doc = await get_document(doc_id)
+    doc = await db.get_document(doc_id)
     if not doc:
-        raise HTTPException(404, "Document not found")
-    await delete_document(doc_id)
-    if doc_id in _active_documents:
-        _active_documents.remove(doc_id)
+        raise HTTPException(status_code=404, detail="Document not found")
+    await db.delete_document(doc_id)
+    logger.info("[pdf] deleted %s (%s)", doc_id, doc["name"])
     return {"ok": True}
 
 
 @router.post("/{doc_id}/archive")
-async def archive_doc(doc_id: str, reason: str | None = None):
-    """Invalidate a document without deleting it: it stays stored (row, chunks,
-    digest) but is excluded from activation, so it no longer reaches the Live
-    prompt or retrieval. Reversible via /unarchive. Requires migration 004."""
-    doc = await get_document(doc_id)
+async def archive_doc(doc_id: str):
+    doc = await db.get_document(doc_id)
     if not doc:
-        raise HTTPException(404, "Document not found")
-    await set_document_status(
-        doc_id,
-        "archived",
-        message=reason or "Archivado: reemplazado por una versión más reciente.",
+        raise HTTPException(status_code=404, detail="Document not found")
+    await db.update_document_fields(
+        doc_id, {"status": "archived", "active": False,
+                 "message": "Archivado desde la API"}
     )
-    if doc_id in _active_documents:
-        _active_documents.remove(doc_id)
-    logger.info("[pdf] archived document %s (%s)", doc_id, doc["name"])
-    return {"ok": True, "document_id": doc_id, "status": "archived"}
+    logger.info("[pdf] archived %s (%s)", doc_id, doc["name"])
+    return {"ok": True, "status": "archived"}
 
 
 @router.post("/{doc_id}/unarchive")
 async def unarchive_doc(doc_id: str):
-    doc = await get_document(doc_id)
+    doc = await db.get_document(doc_id)
     if not doc:
-        raise HTTPException(404, "Document not found")
-    await set_document_status(doc_id, "ready", message="")
-    if is_curriculum_source(doc["name"]) and doc_id not in _active_documents:
-        _active_documents.append(doc_id)
-    logger.info("[pdf] unarchived document %s (%s)", doc_id, doc["name"])
-    return {"ok": True, "document_id": doc_id, "status": "ready"}
-
-
-@router.post("/upload", response_model=IngestResponse)
-async def upload_document(file: UploadFile = File(...)):
-    if not file.filename:
-        raise HTTPException(400, "File has no filename")
-
-    ext = Path(file.filename).suffix.lower()
-    if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(400, f"Only {', '.join(ALLOWED_EXTENSIONS)} files are allowed")
-
-    data = await file.read()
-    if len(data) == 0:
-        raise HTTPException(400, "Empty file")
-    if len(data) > 50 * 1024 * 1024:
-        raise HTTPException(400, "File exceeds 50MB limit")
-
-    storage = StorageClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, SUPABASE_STORAGE_BUCKET)
-    genai_client = genai_module.Client(api_key=GEMINI_API_KEY)
-
-    result = await ingest_document(data, file.filename, storage, genai_client)
-
-    if result["status"] == "error":
-        raise HTTPException(500, result["message"])
-
-    return IngestResponse(
-        document_id=result["document_id"],
-        status=result["status"],
-        chunks_count=result["chunks_count"],
-        pages=result["pages"],
-    )
+        raise HTTPException(status_code=404, detail="Document not found")
+    await db.update_document_fields(doc_id, {"status": "ready", "message": ""})
+    logger.info("[pdf] unarchived %s (%s)", doc_id, doc["name"])
+    return {"ok": True, "status": "ready"}
 
 
 @router.post("/{doc_id}/activate", response_model=ActivateResponse)
 async def activate_doc(doc_id: str):
-    doc = await get_document(doc_id)
+    doc = await db.get_document(doc_id)
     if not doc:
-        raise HTTPException(404, "Document not found")
+        raise HTTPException(status_code=404, detail="Document not found")
     if doc["status"] != "ready":
-        raise HTTPException(400, "Document is not ready")
-    if not is_curriculum_source(doc["name"]):
-        raise HTTPException(400, "Document is not a curriculum source")
-    if doc_id not in _active_documents:
-        _active_documents.append(doc_id)
-    logger.info("[pdf] activated document %s (%s)", doc_id, doc["name"])
+        raise HTTPException(status_code=400, detail="Document is not ready")
+    await db.update_document_fields(doc_id, {"active": True})
     return ActivateResponse(
         document_id=doc_id,
         message=f"Documento '{doc['name']}' activado como fuente de conocimiento",
@@ -142,21 +88,17 @@ async def activate_doc(doc_id: str):
 
 @router.post("/activate-all")
 async def activate_all():
-    docs = await list_documents()
-    ready = ready_curriculum_document_ids(docs)
-    if not ready:
-        raise HTTPException(400, "No documents available to activate")
-    set_active_documents(ready)
-    logger.info("[pdf] activated %d documents", len(ready))
-    return {
-        "activated": len(ready),
-        "document_ids": ready,
-        "message": f"{len(ready)} documentos activados como fuente de conocimiento",
-    }
+    docs = await db.list_documents()
+    ready = [d for d in docs if d["status"] == "ready"]
+    for d in ready:
+        await db.update_document_fields(d["id"], {"active": True})
+    return {"activated": len(ready)}
 
 
 @router.post("/deactivate-all")
 async def deactivate_all():
-    set_active_documents([])
-    logger.info("[pdf] all documents deactivated")
-    return {"message": "Todos los documentos desactivados"}
+    docs = await db.list_documents()
+    active = [d for d in docs if d.get("active")]
+    for d in active:
+        await db.update_document_fields(d["id"], {"active": False})
+    return {"deactivated": len(active)}

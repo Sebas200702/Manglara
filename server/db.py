@@ -163,7 +163,7 @@ async def list_active_documents() -> list[dict]:
             params={
                 "active": "eq.true",
                 "status": "eq.ready",
-                "order": "sort_order.asc,nullslast,created_at.asc",
+                "order": "sort_order.asc.nullslast,created_at.asc",
             },
             headers=HEADERS,
         )

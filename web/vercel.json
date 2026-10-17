@@ -4,6 +4,8 @@
     {
       "source": "/api/:path*",
       "destination": "https://manglara-server.vercel.app/api/:path*"
-    }
+    },
+    { "source": "/conocimiento", "destination": "/index.html" },
+    { "source": "/:path*", "destination": "/index.html" }
   ]
 }

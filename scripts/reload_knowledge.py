@@ -35,13 +35,13 @@ from config import (  # noqa: E402
 from db import list_documents, set_document_status  # noqa: E402
 from pdf.digest import build_knowledge_context  # noqa: E402
 from pdf.ingest import ingest_document  # noqa: E402
-from pdf.sources import CURRICULUM_SOURCES, ready_curriculum_document_ids  # noqa: E402
+from pdf.sources import CURRENT_SOURCES, active_document_ids  # noqa: E402
 from prompt import build_system_prompt  # noqa: E402
 from storage import StorageClient  # noqa: E402
 
 CARTILLAS = ROOT / "cartillas"
 
-SOURCES = CURRICULUM_SOURCES
+SOURCES = CURRENT_SOURCES
 
 
 async def deactivate_document(document_id: str, message: str) -> None:
@@ -130,7 +130,7 @@ async def reload(apply: bool) -> None:
 
 async def show_prompt(out: str | None) -> None:
     docs = await list_documents()
-    ready = ready_curriculum_document_ids(docs)
+    ready = active_document_ids(docs)
     knowledge = await build_knowledge_context(ready)
     prompt = build_system_prompt(knowledge)
     if out:

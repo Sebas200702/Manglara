@@ -167,6 +167,30 @@ async def restore(document_id: str):
     return {"ok": True}
 
 
+@router.get("/sources/{document_id}/download")
+async def download_source(document_id: str):
+    """URL firmada para descargar el archivo original (para el historial)."""
+    doc = await db.get_document(document_id)
+    if not doc:
+        raise HTTPException(404, "Documento no encontrado")
+    path = doc.get("storage_path")
+    if not path:
+        raise HTTPException(404, "El documento no tiene archivo en Storage")
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{config.SUPABASE_URL}/storage/v1/object/sign/{config.SUPABASE_STORAGE_BUCKET}/{path}",
+            headers={"apikey": config.SUPABASE_SERVICE_KEY,
+                     "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}"},
+            json={"expiresIn": 300},
+        )
+        resp.raise_for_status()
+        signed = resp.json().get("signedURL")
+    if not signed:
+        raise HTTPException(500, "No se generó la URL de descarga")
+    return {"url": f"{config.SUPABASE_URL}/storage/v1{signed}"}
+
+
 # --- versiones ----------------------------------------------------------
 
 @router.get("/sources/{document_id}/versions")

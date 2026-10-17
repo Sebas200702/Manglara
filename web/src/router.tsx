@@ -1,5 +1,6 @@
 import { createBrowserRouter } from "react-router-dom";
 import { CallScreen } from "./screens/call-screen";
+import { KnowledgeScreen } from "./screens/knowledge";
 import { App } from "./App";
 
 export const router = createBrowserRouter([
@@ -9,6 +10,10 @@ export const router = createBrowserRouter([
       {
         path: "/",
         element: <CallScreen />,
+      },
+      {
+        path: "/conocimiento",
+        element: <KnowledgeScreen />,
       },
     ]
   }

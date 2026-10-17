@@ -90,8 +90,9 @@ class ZoomRecipe(JoinRecipe):
         joined = await click_first(
             page,
             [
-                {"text": "Join"},
-                {"text": "Unirse"},
+                # Exacto: "Join from Your Browser" / "Join Audio" empiezan igual.
+                {"text": "Join", "exact": True},
+                {"text": "Unirse", "exact": True},
             ],
         )
         if not joined:
@@ -101,9 +102,9 @@ class ZoomRecipe(JoinRecipe):
         await click_first(
             page,
             [
-                {"text": "Leave"},
-                {"text": "Salir"},
-                {"text": "End"},
+                {"text": "Leave", "exact": True},
+                {"text": "Salir", "exact": True},
+                {"text": "End", "exact": True},
             ],
             timeout_ms=8000,
         )
@@ -139,4 +140,6 @@ class ZoomRecipe(JoinRecipe):
                 {"text": "Iniciar vídeo" if enabled else "Detener vídeo"},
             ],
             timeout_ms=8000,
+            # "Activar cámara" está contenido en "Desactivar cámara".
+            anchored=True,
         )

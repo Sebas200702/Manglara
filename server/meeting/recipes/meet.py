@@ -112,4 +112,6 @@ class MeetRecipe(JoinRecipe):
                 {"text": "Turn on camera" if enabled else "Turn off camera"},
             ],
             timeout_ms=8000,
+            # "Activar cámara" está contenido en "Desactivar cámara".
+            anchored=True,
         )

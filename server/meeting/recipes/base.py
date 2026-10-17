@@ -6,6 +6,7 @@ anota su fecha de última verificación real.
 """
 
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -80,64 +81,102 @@ async def poll_with_selectors(page, selectors: dict) -> str:
         return "unknown"
 
 
-async def click_first(page, candidates: list, timeout_ms: int = STEP_TIMEOUT_MS) -> bool:
-    """Click al primer candidato visible. Candidato: {'text':..} o {'selector':..}."""
+def _candidate_locator(page, c: dict, anchored: bool = False):
+    """Locator de un candidato: botón con ese nombre accesible o texto visible.
+
+    - `{"selector": css}`: tal cual.
+    - `{"text": t}`: subcadena, sin distinguir mayúsculas.
+    - `{"text": t, "exact": True}` o `anchored=True`: el nombre EMPIEZA por `t`.
+      Necesario donde un texto contiene a otro: "Unmute" contiene "Mute",
+      "Desactivar micrófono" contiene "Activar micrófono", "Join from Your
+      Browser" empieza como el botón "Join". Admite sufijos como atajos de
+      teclado ("Silenciar (Ctrl+Mayús+M)").
+    """
+    if "selector" in c:
+        return page.locator(c["selector"])
+    text = c["text"]
+    if c.get("exact"):
+        name = re.compile(r"^\s*" + re.escape(text) + r"\s*$", re.I)
+    elif anchored:
+        name = re.compile(r"^\s*" + re.escape(text), re.I)
+    else:
+        name = text
+    return page.get_by_role("button", name=name).or_(page.get_by_text(name))
+
+
+def _any_visible_locator(page, candidates: list, anchored: bool = False):
+    combined = None
     for c in candidates:
-        try:
-            if "text" in c:
-                loc = page.get_by_text(c["text"], exact=False)
-            else:
-                loc = page.locator(c["selector"])
-            await loc.first.wait_for(state="visible", timeout=timeout_ms)
-            await loc.first.click(timeout=5000)
-            logger.info("[recipe] click: %s", c)
-            return True
-        except Exception:
-            continue
-    return False
+        loc = _candidate_locator(page, c, anchored)
+        combined = loc if combined is None else combined.or_(loc)
+    return combined.filter(visible=True).first if combined is not None else None
+
+
+def _describe(candidates: list) -> str:
+    return " | ".join(str(c.get("text") or c.get("selector")) for c in candidates)
+
+
+async def click_first(
+    page, candidates: list, timeout_ms: int = STEP_TIMEOUT_MS, anchored: bool = False
+) -> bool:
+    """Click al primer candidato que aparezca visible (espera única).
+
+    Candidato: {'text': ..., 'exact'?: bool} o {'selector': ...}.
+    """
+    loc = _any_visible_locator(page, candidates, anchored)
+    if loc is None:
+        return False
+    try:
+        await loc.wait_for(state="visible", timeout=timeout_ms)
+        await loc.click(timeout=5000)
+        logger.info("[recipe] click: %s", _describe(candidates))
+        return True
+    except Exception:
+        return False
 
 
 async def fill_first(page, candidates: list, value: str) -> bool:
+    combined = None
     for c in candidates:
-        try:
-            if "text" in c:
-                loc = page.get_by_placeholder(c["text"], exact=False)
-            elif "label" in c:
-                loc = page.get_by_label(c["label"], exact=False)
-            else:
-                loc = page.locator(c["selector"])
-            await loc.first.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
-            await loc.first.fill(value)
-            logger.info("[recipe] fill: %s", c)
-            return True
-        except Exception:
-            continue
-    return False
+        if "text" in c:
+            loc = page.get_by_placeholder(c["text"], exact=False)
+        elif "label" in c:
+            loc = page.get_by_label(c["label"], exact=False)
+        else:
+            loc = page.locator(c["selector"])
+        combined = loc if combined is None else combined.or_(loc)
+    if combined is None:
+        return False
+    try:
+        target = combined.filter(visible=True).first
+        await target.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
+        await target.fill(value)
+        logger.info("[recipe] fill: %s", _describe(candidates))
+        return True
+    except Exception:
+        return False
 
 
 async def click_mic_button(page, enable: bool, when_muted: list, when_live: list):
-    """Click best-effort al botón de mic según el estado deseado."""
-    candidates = when_live if enable else when_muted
-    # Si ya está en el estado deseado, el botón opuesto no existe: no hacer nada.
-    opposite = when_muted if enable else when_live
-    try:
-        if await _any_visible(page, opposite):
-            return True
-    except Exception:
-        pass
-    return await click_first(page, candidates, timeout_ms=8000)
+    """Lleva el mic de la reunión al estado pedido (best-effort).
+
+    `when_muted`: botones visibles con el mic SILENCIADO (p. ej. "Unmute").
+    `when_live`: botones visibles con el mic ABIERTO (p. ej. "Mute").
+    Para abrir se pulsa un botón de `when_muted`; si ya se ve uno de
+    `when_live`, ya está abierto y no se toca (y al revés para silenciar).
+    """
+    already = when_live if enable else when_muted
+    to_click = when_muted if enable else when_live
+    if await _any_visible(page, already):
+        return True
+    return await click_first(page, to_click, timeout_ms=8000, anchored=True)
 
 
 async def _any_visible(page, candidates: list) -> bool:
-    for c in candidates:
-        try:
-            loc = (
-                page.get_by_text(c["text"], exact=False)
-                if "text" in c
-                else page.locator(c["selector"])
-            )
-            if await loc.first.is_visible():
-                return True
-        except Exception:
-            continue
-    return False
+    loc = _any_visible_locator(page, candidates, anchored=True)
+    if loc is None:
+        return False
+    try:
+        return await loc.is_visible()
+    except Exception:
+        return False

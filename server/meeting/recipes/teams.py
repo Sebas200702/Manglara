@@ -116,4 +116,6 @@ class TeamsRecipe(JoinRecipe):
                 {"text": "Turn camera on" if enabled else "Turn camera off"},
             ],
             timeout_ms=8000,
+            # "Activar cámara" está contenido en "Desactivar cámara".
+            anchored=True,
         )

@@ -7,8 +7,10 @@ logger = logging.getLogger(__name__)
 class StorageClient:
     def __init__(self, supabase_url: str, service_key: str, bucket: str):
         self._base = f"{supabase_url}/storage/v1/object/{bucket}"
+        self._root = supabase_url
         self._headers = {
             "Authorization": f"Bearer {service_key}",
+            "apikey": service_key,
         }
         self._bucket = bucket
 
@@ -43,3 +45,28 @@ class StorageClient:
             )
             resp.raise_for_status()
             logger.info("[storage] deleted %s", path)
+
+    async def create_signed_upload_url(self, path: str) -> str:
+        """URL firmada para que el navegador suba el archivo DIRECTO a
+        Supabase y nunca pase por Vercel (cuerpo máx. 4.5 MB)."""
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{self._root}/storage/v1/object/upload/sign/{self._bucket}/{path}",
+                headers=self._headers,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            signed = data.get("signed_url") or data.get("url")
+            if not signed:
+                raise RuntimeError("Supabase no devolvió una URL de subida firmada")
+        return f"{self._root}/storage/v1{signed}"
+
+    async def download(self, path: str) -> bytes:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{self._base}/{path}", headers=self._headers)
+            resp.raise_for_status()
+            return resp.content
+
+    def download_sync(self, path: str) -> bytes:
+        """Para correr en un thread (asyncio.to_thread) sin bloquear el loop."""
+        return httpx.get(f"{self._base}/{path}", headers=self._headers).content

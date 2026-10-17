@@ -6,27 +6,15 @@ from pathlib import Path
 
 import fitz
 from docx import Document as DocxDocument
-from fastembed import TextEmbedding
 
 from db import insert_document, insert_chunks, update_document_digest
+from knowledge.embedding import EMBED_BATCH, embed_texts
 from pdf.digest import generate_digest
 from storage import StorageClient
 
 logger = logging.getLogger(__name__)
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx"}
-
-_embedder: TextEmbedding | None = None
-
-
-def get_embedder() -> TextEmbedding:
-    global _embedder
-    if _embedder is None:
-        _embedder = TextEmbedding(
-            model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-            max_length=512,
-        )
-    return _embedder
 
 
 def extract_text_pdf(path: str) -> list[dict]:
@@ -154,12 +142,13 @@ def chunk_pages(
     return chunks
 
 
-def embed_chunks(chunks: list[dict]) -> list[dict]:
-    embedder = get_embedder()
-    texts = [f"passage: {c['content']}" for c in chunks]
-    embeddings = list(embedder.embed(texts))
-    for chunk, emb in zip(chunks, embeddings):
-        chunk["embedding"] = emb.tolist()
+async def embed_chunks(chunks: list[dict]) -> list[dict]:
+    """Vectoriza por la API de Gemini (ver knowledge/embedding.py)."""
+    for i in range(0, len(chunks), EMBED_BATCH):
+        texts = [c["content"] for c in chunks[i:i + EMBED_BATCH]]
+        embeddings = await embed_texts(texts)
+        for chunk, emb in zip(chunks[i:i + EMBED_BATCH], embeddings):
+            chunk["embedding"] = emb
     return chunks
 
 
@@ -188,7 +177,7 @@ async def ingest_document(
         if not chunks:
             return {"status": "error", "message": "No chunks generated"}
 
-        embed_chunks(chunks)
+        await embed_chunks(chunks)
 
         file_uri = None
         try:
@@ -200,12 +189,13 @@ async def ingest_document(
         storage_path = f"{uuid.uuid4()}/{filename}"
         await storage.upload(storage_path, file_data)
 
-        doc_id = await insert_document(
+        doc = await insert_document(
             name=filename,
             storage_path=storage_path,
             page_count=len(pages),
             file_uri=file_uri,
         )
+        doc_id = doc["id"]
 
         db_chunks = [
             {

@@ -65,6 +65,33 @@ def build_init_script(
     )
 
 
+# Esquemas de las apps de escritorio. Si la app está instalada, el lanzador
+# del proveedor intenta abrirla y Chrome muestra "¿Abrir Microsoft Teams?":
+# marcarlos como excluidos lo deniega siempre y la reunión sigue en la web.
+_APP_SCHEMES = ("msteams", "ms-teams", "zoommtg", "zoomus")
+
+
+def _block_app_protocols(profile_dir: str):
+    prefs_path = os.path.join(profile_dir, "Default", "Preferences")
+    try:
+        os.makedirs(os.path.dirname(prefs_path), exist_ok=True)
+        prefs = {}
+        if os.path.exists(prefs_path):
+            with open(prefs_path, encoding="utf-8") as f:
+                prefs = json.load(f)
+        excluded = prefs.setdefault("protocol_handler", {}).setdefault(
+            "excluded_schemes", {}
+        )
+        if all(excluded.get(s) is True for s in _APP_SCHEMES):
+            return
+        for scheme in _APP_SCHEMES:
+            excluded[scheme] = True
+        with open(prefs_path, "w", encoding="utf-8") as f:
+            json.dump(prefs, f)
+    except Exception as e:
+        logger.warning("[meeting] no se pudo bloquear protocolos de apps: %s", e)
+
+
 class MeetingBrowser:
     """Dueño del ciclo de vida de Playwright para una sesión."""
 
@@ -130,6 +157,7 @@ class MeetingBrowser:
             logger.info(
                 "[meeting] perfil persistente: %s", MEETING_CHROME_PROFILE_DIR
             )
+            # _block_app_protocols(MEETING_CHROME_PROFILE_DIR)  # PRUEBA
             self._context = (
                 await self._pw.chromium.launch_persistent_context(
                     MEETING_CHROME_PROFILE_DIR,

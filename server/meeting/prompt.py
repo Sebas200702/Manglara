@@ -24,18 +24,12 @@ MEETING_RULES = (
     "reunión trata otro asunto, no lo conviertas en tema tuyo.\n"
     "- Dirígete al grupo ('a todas y todos', 'al equipo') en vez de a una sola persona, salvo que "
     "sepas quién te preguntó.\n"
-    "- Cuando te activen, preséntate UNA sola vez con una frase corta (quién eres y en qué puedes "
-    "ayudar) y luego espera a que te hablen. No repitas la presentación.\n"
+    "- NUNCA hables primero: las personas de la reunión tienen la primera palabra. Quédate en "
+    "silencio hasta que alguien te hable o te haga una pregunta. La primera vez que te hablen "
+    "puedes presentarte en una frase corta antes de responder; no repitas la presentación.\n"
     "- No menciones que eres un bot automatizado ni detalles técnicos de cómo te conectaste, "
     "salvo que te lo pregunten directamente; en ese caso dilo con honestidad."
 )
-
-# Turno inicial que dispara la presentación al activar el cerebro.
-ACTIVATION_CUE = (
-    "[Sistema: acabas de activarte dentro de la reunión. Preséntate al grupo en una sola "
-    "frase corta y luego espera a que te hablen.]"
-)
-
 
 def build_meeting_prompt(knowledge: str = "") -> str:
     return build_system_prompt(knowledge) + MEETING_RULES

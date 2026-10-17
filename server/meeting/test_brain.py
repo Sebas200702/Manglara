@@ -9,7 +9,6 @@ import asyncio
 from meeting import brain as brain_mod
 from meeting.bridge import MeetingBridge
 from meeting.models import MeetingSession
-from meeting.prompt import ACTIVATION_CUE
 
 _passed = 0
 
@@ -116,7 +115,7 @@ async def main():
     g = FakeGemini.instances[-1]
     check(session.brain == "active", "brain=active")
     check(session.media.mic_enabled and recipe.mic_calls[-1] is True, "abre el mic")
-    check(g.texts == [ACTIVATION_CUE], "envía la señal de presentación")
+    check(g.texts == [], "no habla primero (sin presentación automática)")
     check("MODO REUNIÓN" in (g.prompt or ""), "usa el prompt de reunión")
 
     print("audio remoto -> Gemini")

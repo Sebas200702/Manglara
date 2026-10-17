@@ -135,6 +135,53 @@ async def click_first(
         return False
 
 
+async def press_until_gone(
+    page,
+    candidates: list,
+    dom_selector: str = "",
+    dom_text: str = "",
+    attempts: int = 4,
+    first_timeout_ms: int = STEP_TIMEOUT_MS,
+) -> bool:
+    """Pulsa un botón hasta que desaparezca (la página avanzó).
+
+    Los proveedores ignoran clicks antes de hidratar, y el click de Playwright
+    sobre el texto puede caer en un span interno sin handler: tras cada click
+    sin efecto se hace un click DOM directo (`dom_selector`, o el primer botón
+    cuyo aria-label/texto cumpla la regex `dom_text`). True si llegó a pulsarlo.
+    """
+    pressed = False
+    for attempt in range(attempts):
+        timeout = first_timeout_ms if attempt == 0 else 4000
+        if not await click_first(page, candidates, timeout_ms=timeout):
+            return pressed
+        pressed = True
+        await page.wait_for_timeout(2500)
+        if not await _any_visible(page, candidates):
+            return True
+        try:
+            await page.evaluate(
+                """([sel, re]) => {
+                  let b = sel ? document.querySelector(sel) : null;
+                  if (!b && re) {
+                    const rx = new RegExp(re, 'i');
+                    b = [...document.querySelectorAll('button, [role=button]')].find(
+                      (x) => rx.test(x.getAttribute('aria-label') || '') ||
+                             rx.test(x.innerText || ''));
+                  }
+                  if (b) b.click();
+                }""",
+                [dom_selector, dom_text],
+            )
+        except Exception:
+            pass
+        await page.wait_for_timeout(2500)
+        if not await _any_visible(page, candidates):
+            return True
+        logger.info("[recipe] el botón sigue visible, reintento (%d)", attempt + 1)
+    return pressed
+
+
 async def fill_first(page, candidates: list, value: str) -> bool:
     combined = None
     for c in candidates:

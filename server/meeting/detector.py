@@ -67,7 +67,10 @@ def detect(raw: str) -> Provider:
 def normalize(provider: Provider, raw: str) -> str:
     """Devuelve la URL canónica para abrir en el navegador.
 
-    - Link completo: se limpia (tracking params fuera, `pwd` de Zoom se conserva).
+    - Link completo: se limpia de tracking. Se conservan los parámetros que
+      el proveedor necesita para entrar: `pwd` de Zoom y, en Teams, todos
+      salvo `utm_*` (`p` = código de acceso de /meet/<id>, `context` =
+      tenant/organizador de /l/meetup-join).
     - ID suelto: se construye la URL (Zoom y Meet; Teams exige link completo).
     """
     from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
@@ -85,7 +88,10 @@ def normalize(provider: Provider, raw: str) -> str:
             )
         parts = urlparse(text)
         query = dict(parse_qsl(parts.query))
-        keep = {k: v for k, v in query.items() if k.lower() == "pwd"}
+        if provider == "teams":
+            keep = {k: v for k, v in query.items() if not k.lower().startswith("utm_")}
+        else:
+            keep = {k: v for k, v in query.items() if k.lower() == "pwd"}
         cleaned = parts._replace(
             scheme="https",
             query=urlencode(keep),

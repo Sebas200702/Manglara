@@ -68,6 +68,8 @@ class MeetingBridge:
         self._ws_down_since: float | None = None
         self._ws_retried = False
         self._alone_since: float | None = None
+        # Diagnóstico: audio de participantes recibido de la página.
+        self.remote_pcm_bytes = 0
 
     # -- eventos hacia la UI -------------------------------------------------
     async def _emit(self):
@@ -176,6 +178,9 @@ class MeetingBridge:
             if state == "in_meeting" and s.bridge != "in_meeting":
                 self._set_bridge("in_meeting")
                 await self._emit()
+                # El proveedor puede meterla con el micro abierto: alinear su UI
+                # con el estado del bot (dormida = muda).
+                await self.set_mic(s.media.mic_enabled)
             elif state == "lobby" and s.bridge != "lobby":
                 self._set_bridge("lobby")
                 await self._emit()
@@ -413,6 +418,7 @@ class MeetingBridge:
             except Exception as e:
                 logger.warning("[meeting] pcm inválido: %s", e)
                 return
+            self.remote_pcm_bytes += len(pcm)
             if self.brain:
                 await self.brain.feed_remote_pcm(pcm)
             if self.on_remote_pcm:
@@ -445,6 +451,12 @@ class MeetingBridge:
         elif mtype == "avatar_timeout":
             logger.warning(
                 "[meeting] el avatar no envió frames en 5 s: cámara con logo"
+            )
+        elif mtype == "tee":
+            logger.info(
+                "[meeting] audio remoto enganchado (%s), pistas=%s",
+                msg.get("source"),
+                msg.get("tracks"),
             )
         elif mtype == "gum_called":
             logger.debug("[meeting:page] gum_called")

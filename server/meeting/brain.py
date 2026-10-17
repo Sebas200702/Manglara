@@ -22,7 +22,7 @@ from gemini_client import GeminiLiveClient
 from pdf.digest import build_knowledge_context
 from pdf.retrieval import retrieve_context
 from pdf.router import get_active_documents
-from .prompt import ACTIVATION_CUE, build_meeting_prompt
+from .prompt import build_meeting_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,8 @@ class MeetingBrain:
     async def start(self):
         self._stopping = False
         self._knowledge = await self._load_knowledge()
-        await self._connect(greet=True)
+        # Sin presentación automática: las personas tienen la primera palabra.
+        await self._connect()
         self._task = asyncio.create_task(self._run())
 
     async def stop(self):
@@ -90,7 +91,7 @@ class MeetingBrain:
             logger.warning("[brain] precarga de conocimiento falló: %s", e)
             return ""
 
-    async def _connect(self, greet: bool):
+    async def _connect(self):
         gemini = GeminiLiveClient()
         gemini.log_transcripts = False  # privacidad de los participantes
         gemini.transcript_callback = self._handle_transcript
@@ -100,8 +101,6 @@ class MeetingBrain:
         await gemini.connect(system_prompt=build_meeting_prompt(self._knowledge))
         self._gemini = gemini
         logger.info("[brain] sesión Gemini abierta")
-        if greet:
-            await gemini.send_text(ACTIVATION_CUE)
 
     async def _close_gemini(self):
         gemini, self._gemini = self._gemini, None
@@ -116,7 +115,7 @@ class MeetingBrain:
         while not self._stopping:
             if self._gemini is None:
                 try:
-                    await self._connect(greet=False)
+                    await self._connect()
                 except Exception as e:
                     fast_failures += 1
                     logger.warning("[brain] reconexión falló (%d): %s", fast_failures, e)

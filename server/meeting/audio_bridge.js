@@ -468,20 +468,62 @@
   }
 
   var teedTracks = {};
-  function teeTrack(track) {
+  var teeMixer = null;
+  var teeTrackList = [];
+  var teeStats = { tracks: 0, chunks: 0, sources: {} };
+  // Chromium quirk: a remote WebRTC track fed to WebAudio renders SILENCE
+  // unless the track is also attached to a media element. A muted <audio>
+  // per track unblocks it (and outputs nothing).
+  var sinkHolder = [];
+  function attachSink(track) {
+    try {
+      var a = document.createElement("audio");
+      a.muted = true;
+      a.autoplay = true;
+      a.srcObject = new MediaStream([track]);
+      var p = a.play();
+      if (p && p.catch) p.catch(function () {});
+      sinkHolder.push(a);
+    } catch (_) {}
+  }
+
+  function teeTrack(track, source) {
     if (!track || track.kind !== "audio") return;
+    if (track === micTrack) return; // our own fake mic, never a participant
     if (teedTracks[track.id]) return;
     teedTracks[track.id] = true;
+    teeTrackList.push(track);
+    teeStats.tracks++;
+    teeStats.sources[source || "?"] = (teeStats.sources[source || "?"] || 0) + 1;
+    report({ type: "tee", source: source || "?", tracks: teeStats.tracks });
+    attachSink(track);
     try {
       var ctx = audioCtx();
+      if (ctx.state === "suspended") ctx.resume().catch(function () {});
       ensureWorklet(ctx).then(
         function () {
+          // ONE mixer for every participant track: separate taps would each
+          // send their own 16 kHz stream and the backend would receive them
+          // interleaved (2 tracks = audio at double speed for Gemini).
+          if (!teeMixer) {
+            teeMixer = ctx.createGain();
+            var node = new AudioWorkletNode(ctx, "manglara-tee");
+            node.port.onmessage = function (ev) {
+              teeStats.chunks++;
+              // Peak level (0..32767), decaying: tells silence from voice.
+              var s16 = new Int16Array(ev.data);
+              var pk = 0;
+              for (var q = 0; q < s16.length; q++) {
+                var av = s16[q] < 0 ? -s16[q] : s16[q];
+                if (av > pk) pk = av;
+              }
+              teeStats.peak = Math.max(pk, Math.round((teeStats.peak || 0) * 0.98));
+              report({ type: "remote_pcm", data: b64encode(ev.data) });
+            };
+            teeMixer.connect(node);
+          }
           var src = ctx.createMediaStreamSource(new MediaStream([track]));
-          var node = new AudioWorkletNode(ctx, "manglara-tee");
-          node.port.onmessage = function (ev) {
-            report({ type: "remote_pcm", data: b64encode(ev.data) });
-          };
-          src.connect(node);
+          src.connect(teeMixer);
         },
         function (err) {
           log("tee worklet failed: " + err);
@@ -532,9 +574,88 @@
           });
         },
       });
+
+      // Some clients (Teams web) never rely on 'track' events and read the
+      // receivers directly: remember every connection and scan them.
+      var livePCs = [];
+      var WrappedPC = function (config, constraints) {
+        var pc = new OrigPC(config, constraints);
+        livePCs.push(pc);
+        return pc;
+      };
+      WrappedPC.prototype = OrigPC.prototype;
+      Object.setPrototypeOf(WrappedPC, OrigPC);
+      try {
+        Object.defineProperty(WrappedPC, "name", { value: "RTCPeerConnection" });
+      } catch (_) {}
+      window.RTCPeerConnection = WrappedPC;
+      if (window.webkitRTCPeerConnection) window.webkitRTCPeerConnection = WrappedPC;
+      setInterval(function () {
+        for (var i = livePCs.length - 1; i >= 0; i--) {
+          var pc = livePCs[i];
+          if (pc.connectionState === "closed") {
+            livePCs.splice(i, 1);
+            continue;
+          }
+          try {
+            var rs = pc.getReceivers();
+            for (var j = 0; j < rs.length; j++) {
+              if (rs[j].track) teeTrack(rs[j].track, "receiver");
+            }
+          } catch (_) {}
+        }
+        teeStats.pcs = livePCs.length;
+      }, 1500);
     }
   } catch (err) {
     log("RTCPeerConnection patch failed: " + err);
+  }
+
+  // And whatever the page plays through its own WebAudio graph. Clients that
+  // decode/decrypt media themselves (Teams web) leave the WebRTC receiver
+  // track silent and render participants through an AudioContext: tap every
+  // node connected to a page context's destination.
+  try {
+    var origConnect = AudioNode.prototype.connect;
+    AudioNode.prototype.connect = function (dest) {
+      var res = origConnect.apply(this, arguments);
+      try {
+        if (dest instanceof AudioDestinationNode && this.context !== actx) {
+          var c = this.context;
+          if (!c.__manglaraTap) {
+            c.__manglaraTap = c.createMediaStreamDestination();
+            teeTrack(c.__manglaraTap.stream.getAudioTracks()[0], "audio-context");
+          }
+          origConnect.call(this, c.__manglaraTap);
+        }
+      } catch (_) {}
+      return res;
+    };
+  } catch (err) {
+    log("AudioNode.connect patch failed: " + err);
+  }
+
+  // And whatever remote audio the page plays through a media element.
+  try {
+    var srcDesc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "srcObject");
+    if (srcDesc && srcDesc.set) {
+      Object.defineProperty(HTMLMediaElement.prototype, "srcObject", {
+        configurable: true,
+        enumerable: srcDesc.enumerable,
+        get: srcDesc.get,
+        set: function (stream) {
+          try {
+            if (stream && stream.getAudioTracks && sinkHolder.indexOf(this) < 0) {
+              var ats = stream.getAudioTracks();
+              for (var k = 0; k < ats.length; k++) teeTrack(ats[k], "media-element");
+            }
+          } catch (_) {}
+          return srcDesc.set.call(this, stream);
+        },
+      });
+    }
+  } catch (err) {
+    log("srcObject patch failed: " + err);
   }
 
   /* ---------- meeting state polling (selectors from recipe) ---------- */
@@ -617,5 +738,32 @@
     setCam: setCam,
     playBotPcm: playBotPcm,
     control: onControl,
+    stats: function () {
+      return {
+        tee: teeStats,
+        tracks: teeTrackList.map(function (t) {
+          return { id: t.id.slice(0, 8), muted: t.muted, enabled: t.enabled, state: t.readyState };
+        }),
+        mediaElements: Array.prototype.slice
+          .call(document.querySelectorAll("audio,video"))
+          .filter(function (el) { return sinkHolder.indexOf(el) < 0; })
+          .map(function (el) {
+            var so = el.srcObject;
+            return {
+              tag: el.tagName,
+              paused: el.paused,
+              muted: el.muted,
+              audioTracks: so && so.getAudioTracks ? so.getAudioTracks().length : 0,
+              src: el.src ? "url" : so ? "stream" : "none",
+            };
+          }),
+        audioContext: actx ? actx.state : "none",
+        micOn: micOn,
+        camOn: camOn,
+        avatarReady: avatarReady,
+        avatarFrameAgeMs: lastAvatarFrameAt ? Date.now() - lastAvatarFrameAt : null,
+        wsOpen: !!(ws && ws.readyState === 1),
+      };
+    },
   };
 })();

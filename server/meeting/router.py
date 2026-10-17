@@ -8,7 +8,7 @@ import logging
 import re
 import secrets
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field, field_validator
 
 from config import MEETING_BOT_NAME
@@ -170,6 +170,42 @@ async def list_meetings():
 @router.get("/{session_id}")
 async def get_meeting(session_id: str):
     return _get_or_404(session_id).public_state()
+
+
+@router.get("/{session_id}/debug/ui")
+async def debug_meeting_ui(session_id: str, request: Request):
+    """Mantenimiento de recetas: botones/campos visibles en la página del bot.
+
+    Solo desde la máquina local (devuelve texto de la UI de la reunión).
+    """
+    if (request.client.host if request.client else "") not in _LOOPBACK:
+        raise HTTPException(403, "Solo disponible en local")
+    bridge = _get_bridge_or_404(session_id)
+    page = bridge.browser.page
+    if page is None:
+        raise HTTPException(409, "El navegador de la reunión no está abierto")
+    data = await page.evaluate(
+        """() => {
+          const vis = (el) => { const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0; };
+          const label = (el) => (el.getAttribute('aria-label') || el.innerText ||
+            el.getAttribute('placeholder') || el.getAttribute('title') || '').trim();
+          const pick = (sel) => [...document.querySelectorAll(sel)]
+            .filter(vis).map(label).filter(Boolean).slice(0, 80);
+          return {
+            title: document.title,
+            buttons: pick('button, [role=button], a[role=link]'),
+            inputs: pick('input, textarea'),
+            text: (document.body ? document.body.innerText : '').slice(0, 1500),
+          };
+        }"""
+    )
+    data["recipe_state"] = await bridge.recipe.poll_state(page)
+    data["bridge_stats"] = await page.evaluate(
+        "() => window.__manglaraBridge && window.__manglaraBridge.stats()"
+    )
+    data["remote_pcm_bytes"] = bridge.remote_pcm_bytes
+    return data
 
 
 @router.post("/{session_id}/leave")

@@ -108,6 +108,20 @@ def t_wrong_provider():
 
 
 
+def t_teams_passcode_and_context_kept():
+    p, url = detect_and_normalize(
+        "https://teams.microsoft.com/meet/2910207036984467?p=x1pENPceouIGY13D8k&utm_source=x"
+    )
+    assert p == "teams", p
+    assert "p=x1pENPceouIGY13D8k" in url, url
+    assert "utm_source" not in url, url
+    p, url = detect_and_normalize(
+        "https://teams.microsoft.com/l/meetup-join/19%3Ameeting_x%40thread.v2/0"
+        '?context=%7B%22Tid%22%3A%22abc%22%7D'
+    )
+    assert "context=" in url, url
+
+
 def t_redact_urls():
     out = redact_urls(
         'navigating to "https://zoom.us/wc/81234567890/join?pwd=SECRET", waiting'

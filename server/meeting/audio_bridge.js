@@ -41,7 +41,10 @@
 
   var CFG = window.__MANGLARA_CFG || {};
   var WS_URL = CFG.wsUrl || "";
+  // Sent as a WebSocket subprotocol, not in the URL: URLs end up in access logs.
+  var WS_TOKEN = CFG.wsToken || "";
   var SESSION_ID = CFG.sessionId || "";
+  var BRIDGE_PROTOCOL = "manglara.bridge";
   var SAMPLE_RATE = 16000; // PCM we send to the backend
   var BOT_RATE = 24000; // PCM we receive from Gemini
 
@@ -76,7 +79,9 @@
     if (wsDead || !WS_URL) return;
     var sock;
     try {
-      sock = new WebSocket(WS_URL);
+      sock = WS_TOKEN
+        ? new WebSocket(WS_URL, [BRIDGE_PROTOCOL, "t." + WS_TOKEN])
+        : new WebSocket(WS_URL);
     } catch (_) {
       setTimeout(connectWs, 3000);
       return;

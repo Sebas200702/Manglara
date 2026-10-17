@@ -67,16 +67,20 @@ def main():
 
         print("WS interno protegido")
         check("bridge_token" not in r.text, "el listado no expone el token")
-        for path in (
-            f"/ws/meetings/{first}/bridge",
-            f"/ws/meetings/{first}/bridge?token=adivinado",
+        path = f"/ws/meetings/{first}/bridge"
+        real = router_mod.SESSIONS[first].bridge_token
+        for label, protos in (
+            ("sin token", []),
+            ("token adivinado", ["manglara.bridge", "t.adivinado"]),
+            # El token correcto desde un host no-loopback ("testclient").
+            ("host no local", ["manglara.bridge", f"t.{real}"]),
         ):
             try:
-                with client.websocket_connect(path) as ws:
+                with client.websocket_connect(path, subprotocols=protos) as ws:
                     ws.receive_text()
                 check(False, "debía rechazar")
             except WebSocketDisconnect as e:
-                check(e.code == 4403, f"rechaza {path.split('/')[-1]}")
+                check(e.code == 4403, f"rechaza {label}")
 
         print("leave libera el cupo")
         r = client.post(f"/meetings/{first}/leave")

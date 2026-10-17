@@ -50,6 +50,17 @@ def _prune_finished():
 
 # El WS interno solo acepta la página del Chromium local.
 _LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+# La página manda el token como subprotocolo ("manglara.bridge", "t.<token>")
+# para que no aparezca en la URL (los access logs de uvicorn la imprimen).
+BRIDGE_PROTOCOL = "manglara.bridge"
+
+
+def _bridge_token(ws: WebSocket) -> str:
+    offered = ws.headers.get("sec-websocket-protocol", "")
+    for proto in (p.strip() for p in offered.split(",")):
+        if proto.startswith("t."):
+            return proto[2:]
+    return ""
 
 
 class JoinRequest(BaseModel):
@@ -230,7 +241,7 @@ async def ws_meeting_bridge(ws: WebSocket, session_id: str):
     if bridge is None:
         await ws.close(code=4404)
         return
-    token = ws.query_params.get("token", "")
+    token = _bridge_token(ws)
     host = ws.client.host if ws.client else ""
     if host not in _LOOPBACK or not secrets.compare_digest(
         token, bridge.session.bridge_token
@@ -238,4 +249,4 @@ async def ws_meeting_bridge(ws: WebSocket, session_id: str):
         logger.warning("[meetings] WS interno rechazado (%s)", session_id[:8])
         await ws.close(code=4403)
         return
-    await bridge.handle_bridge_ws(ws)
+    await bridge.handle_bridge_ws(ws, subprotocol=BRIDGE_PROTOCOL)

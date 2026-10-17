@@ -10,6 +10,7 @@ import logging
 
 from .base import (
     JoinRecipe,
+    poll_with_selectors,
     click_first,
     click_mic_button,
     fill_first,
@@ -54,8 +55,26 @@ class MeetRecipe(JoinRecipe):
         ],
     }
 
+    # Meet rechaza la entrada (invitado anónimo no permitido por el organizador
+    # o por el administrador del Workspace).
+    BLOCKED = [
+        {"text": "No puedes unirte a esta videollamada"},
+        {"text": "You can't join this video call"},
+    ]
+    BLOCKED_MESSAGE = (
+        "Google Meet no deja entrar a invitados sin cuenta en esta reunión. "
+        "Usa un perfil logueado (MEETING_CHROME_PROFILE_DIR + "
+        "python -m meeting.login_profile) o pide al organizador que permita "
+        "invitados."
+    )
+
+    async def _raise_if_blocked(self, page):
+        if await poll_with_selectors(page, {"left": self.BLOCKED}) == "left":
+            raise RuntimeError(self.BLOCKED_MESSAGE)
+
     async def join(self, page, name: str):
         await page.wait_for_timeout(3000)
+        await self._raise_if_blocked(page)
         filled = await fill_first(
             page,
             [
@@ -78,6 +97,7 @@ class MeetRecipe(JoinRecipe):
             ],
         )
         if not joined:
+            await self._raise_if_blocked(page)
             raise RuntimeError("no se encontró el botón de unirse")
 
     async def leave(self, page):

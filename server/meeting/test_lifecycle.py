@@ -42,7 +42,7 @@ class FakeBrowser:
         self.lost_reason = None
         self.closed = False
 
-    async def launch(self, ws_url, session_id, selectors):
+    async def launch(self, ws_url, session_id, selectors, ws_token=""):
         self.page = FakePage()
 
     @property

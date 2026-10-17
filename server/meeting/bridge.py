@@ -90,11 +90,10 @@ class MeetingBridge:
         try:
             self._set_bridge("launching")
             await self._emit()
-            ws_url = (
-                f"ws://127.0.0.1:{PORT}/ws/meetings/{s.id}/bridge"
-                f"?token={s.bridge_token}"
+            ws_url = f"ws://127.0.0.1:{PORT}/ws/meetings/{s.id}/bridge"
+            await self.browser.launch(
+                ws_url, s.id, self.recipe.selectors, ws_token=s.bridge_token
             )
-            await self.browser.launch(ws_url, s.id, self.recipe.selectors)
             # Mic falso arranca mudo: entra dormida por defecto.
             await self._send_control({"type": "set_mic", "enabled": False})
 
@@ -379,8 +378,8 @@ class MeetingBridge:
         await self._emit()
 
     # -- WS interno (página inyectada <-> backend) -----------------------------
-    async def handle_bridge_ws(self, ws: WebSocket):
-        await ws.accept()
+    async def handle_bridge_ws(self, ws: WebSocket, subprotocol: str | None = None):
+        await ws.accept(subprotocol=subprotocol)
         if self._page_ws:
             logger.warning("[meeting] WS interno duplicado, reemplazo")
         self._page_ws = ws

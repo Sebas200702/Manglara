@@ -40,7 +40,9 @@ def resolve_avatar_url() -> str:
     return urljoin(MEETING_WEB_URL + "/", raw.lstrip("/"))
 
 
-def build_init_script(ws_url: str, session_id: str, selectors: dict) -> str:
+def build_init_script(
+    ws_url: str, session_id: str, selectors: dict, ws_token: str = ""
+) -> str:
     """Pre-script + bridge. `selectors` viene de la receta del proveedor."""
     avatar_url = resolve_avatar_url()
     avatar_origin = ""
@@ -50,6 +52,7 @@ def build_init_script(ws_url: str, session_id: str, selectors: dict) -> str:
     cfg = json.dumps(
         {
             "wsUrl": ws_url,
+            "wsToken": ws_token,
             "sessionId": session_id,
             "avatarUrl": avatar_url,
             "avatarOrigin": avatar_origin,
@@ -91,7 +94,9 @@ class MeetingBrowser:
     def alive(self) -> bool:
         return self.page is not None and self.lost_reason is None
 
-    async def launch(self, ws_url: str, session_id: str, selectors: dict):
+    async def launch(
+        self, ws_url: str, session_id: str, selectors: dict, ws_token: str = ""
+    ):
         self._pw = await async_playwright().start()
 
         # headless=new de Chromium completo (no headless-shell): WebRTC y
@@ -119,7 +124,7 @@ class MeetingBrowser:
         if MEETING_HEADLESS:
             args = ["--headless=new"] + args
 
-        init_script = build_init_script(ws_url, session_id, selectors)
+        init_script = build_init_script(ws_url, session_id, selectors, ws_token)
 
         if MEETING_CHROME_PROFILE_DIR:
             logger.info(

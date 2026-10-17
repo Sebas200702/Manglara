@@ -13,6 +13,7 @@ import { useCallScreen } from "./use-call-screen";
 import { Logo } from "../../components/brand/logo";
 import { PartnerLogos } from "../../components/brand/partner-logos";
 import { MangroveVideo } from "../../components/brand/mangrove-video";
+import { SectionNav } from "../../components/section-nav";
 
 const connectionLabels: Record<string, string> = {
   connected: "En llamada",
@@ -58,6 +59,10 @@ export function CallScreen() {
         </div>
 
         <div className="flex items-center gap-2">
+          <SectionNav
+            locked={inCall}
+            lockedReason="Cuelga la llamada para cambiar de sección"
+          />
           {/* Status Indicator */}
           <span
             className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition-all border ${

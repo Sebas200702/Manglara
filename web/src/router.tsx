@@ -1,5 +1,6 @@
 import { createBrowserRouter } from "react-router-dom";
 import { CallScreen } from "./screens/call-screen";
+import { MeetingScreen } from "./screens/meeting-screen";
 import { App } from "./App";
 
 export const router = createBrowserRouter([
@@ -9,6 +10,10 @@ export const router = createBrowserRouter([
       {
         path: "/",
         element: <CallScreen />,
+      },
+      {
+        path: "/reunion",
+        element: <MeetingScreen />,
       },
     ]
   }

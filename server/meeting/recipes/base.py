@@ -17,11 +17,14 @@ class JoinRecipe:
     last_verified = "sin verificar (pendiente de reunión real)"
 
     # Para window.__MEETING_SELECTORS__: listas de {selector} y/o {text}.
+    # "alone" (opcional): visible cuando el bot es el único participante;
+    # alimenta el auto-leave (MEETING_ALONE_TIMEOUT_MIN).
     selectors: dict = {
         "joining": [],
         "lobby": [],
         "inMeeting": [],
         "left": [],
+        "alone": [],
     }
 
     def entry_url(self, url: str) -> str:
@@ -33,6 +36,13 @@ class JoinRecipe:
     async def poll_state(self, page) -> str:
         """'joining' | 'lobby' | 'in_meeting' | 'left' | 'unknown'."""
         return await poll_with_selectors(page, self.selectors)
+
+    async def is_alone(self, page) -> bool:
+        """True si la UI indica que no hay más participantes."""
+        alone = self.selectors.get("alone") or []
+        if not alone:
+            return False
+        return await poll_with_selectors(page, {"left": alone}) == "left"
 
     async def leave(self, page):
         raise NotImplementedError

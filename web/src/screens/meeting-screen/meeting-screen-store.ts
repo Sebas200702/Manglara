@@ -3,6 +3,7 @@ import type { TranscriptEntry } from "../../components/transcript-panel";
 import type {
   BrainState,
   BridgeState,
+  EndReason,
   MeetingProvider,
   MeetingState,
   MeetingTranscriptRole,
@@ -31,6 +32,8 @@ interface MeetingScreenState {
   micOn: boolean;
   camOn: boolean;
   error: string | null;
+  /** Why the last meeting ended, shown as a notice. */
+  endReason: EndReason | null;
   transcripts: TranscriptEntry[];
   /** Join request in flight. */
   connecting: boolean;
@@ -57,6 +60,7 @@ const initialSession = {
   meetingId: null,
   bridgeState: null,
   brainState: "off" as BrainState,
+  endReason: null,
   micOn: false,
   camOn: true,
   connecting: false,
@@ -94,6 +98,7 @@ export const useMeetingScreenStore = create<MeetingScreenState>((set) => ({
       micOn: s.mic_enabled,
       camOn: s.cam_enabled,
       error: s.error,
+      endReason: s.end_reason,
     }),
 
   appendTranscript: (role, text) =>

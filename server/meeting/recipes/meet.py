@@ -41,6 +41,11 @@ class MeetRecipe(JoinRecipe):
             {"text": "Turn off microphone"},
             {"text": "Turn on microphone"},
         ],
+        "alone": [
+            {"text": "Eres la única persona aquí"},
+            {"text": "You're the only one here"},
+            {"text": "No hay nadie más"},
+        ],
         "left": [
             {"text": "Has salido de la reunión"},
             {"text": "You left the meeting"},

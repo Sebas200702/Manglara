@@ -12,14 +12,15 @@ import asyncio
 import base64
 import json
 import logging
+import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from config import MEETING_MAX_DURATION_MIN, PORT
+from config import MEETING_ALONE_TIMEOUT_MIN, MEETING_MAX_DURATION_MIN, PORT
 from .brain import MeetingBrain
 from .browser import MeetingBrowser
-from .models import MeetingSession
+from .models import EndReason, MeetingSession
 
 if TYPE_CHECKING:
     from .recipes.base import JoinRecipe
@@ -30,6 +31,8 @@ logger = logging.getLogger(__name__)
 BRIDGES: dict[str, "MeetingBridge"] = {}
 
 POLL_INTERVAL_S = 2.0
+# WS interno (página inyectada) caído más de esto -> 1 reintento -> error.
+WS_DEAD_S = 30.0
 
 
 class JoinError(RuntimeError):
@@ -57,6 +60,13 @@ class MeetingBridge:
         self._page_ws: WebSocket | None = None
         self._closing = False
         self._max_duration_task: asyncio.Task | None = None
+        self._lost = asyncio.Event()
+        self._left = asyncio.Event()
+        # Watchdog del WS interno: desde cuándo está caído (None = conectado
+        # o aún sin página) y si ya se gastó el reintento.
+        self._ws_down_since: float | None = None
+        self._ws_retried = False
+        self._alone_since: float | None = None
 
     # -- eventos hacia la UI -------------------------------------------------
     async def _emit(self):
@@ -75,6 +85,7 @@ class MeetingBridge:
     async def run(self):
         s = self.session
         BRIDGES[s.id] = self
+        self.browser.on_lost = self._on_browser_lost
         try:
             self._set_bridge("launching")
             await self._emit()
@@ -85,34 +96,73 @@ class MeetingBridge:
 
             self._set_bridge("joining")
             await self._emit()
+            self._ws_down_since = time.monotonic()
             entry = self.recipe.entry_url(s.url)
             logger.info("[meeting] navegando a reunión (%s)", s.provider)
             await self.browser.page.goto(entry, timeout=60000)
             try:
                 await self.recipe.join(self.browser.page, s.name)
             except Exception as e:
-                raise JoinError(f"join falló: {e}")
+                raise JoinError(f"No se pudo unir a la reunión: {e}")
 
             self._max_duration_task = asyncio.create_task(self._max_duration())
             await self._poll_loop()
+            # leave() pedida desde la API corre en otra task: no cerrar el
+            # browser mientras todavía está pulsando "Salir" en la reunión.
+            if s.bridge == "leaving":
+                try:
+                    await asyncio.wait_for(self._left.wait(), 30)
+                except asyncio.TimeoutError:
+                    logger.warning("[meeting] leave tardó demasiado; cerrando")
         except JoinError as e:
-            s.error = str(e)[:300]
-            self._set_bridge("error")
-            await self._emit()
-            logger.error("[meeting] %s: %s", s.id[:8], e)
+            await self._fail(str(e))
         except Exception as e:
-            s.error = str(e)[:300]
-            self._set_bridge("error")
-            await self._emit()
-            logger.exception("[meeting] %s error inesperado", s.id[:8])
+            if self.browser.lost_reason:
+                await self._fail(self._lost_message())
+            else:
+                logger.exception("[meeting] %s error inesperado", s.id[:8])
+                await self._fail(f"Error inesperado: {e}")
         finally:
             await self._cleanup()
+            if s.ended_at is None:
+                s.ended_at = time.time()
             BRIDGES.pop(s.id, None)
+
+    def _on_browser_lost(self, reason: str):
+        # Callback síncrono de Playwright: solo despierta al poll loop.
+        self._lost.set()
+
+    def _lost_message(self) -> str:
+        reason = self.browser.lost_reason or "motivo desconocido"
+        return f"Se perdió el navegador de la reunión ({reason})"
+
+    async def _fail(self, message: str):
+        """Termina en estado error, sin clicks en la UI de la reunión."""
+        s = self.session
+        if s.bridge in ("closed", "error"):
+            return
+        self._closing = True
+        await self.brain_stop(emit=False)
+        s.error = message[:300]
+        self._set_bridge("error")
+        logger.error("[meeting] %s: %s", s.id[:8], s.error)
+        await self._emit()
 
     async def _poll_loop(self):
         s = self.session
         while not self._closing:
-            await asyncio.sleep(POLL_INTERVAL_S)
+            try:
+                await asyncio.wait_for(self._lost.wait(), POLL_INTERVAL_S)
+            except asyncio.TimeoutError:
+                pass
+            if self._closing:
+                return
+            if self._lost.is_set():
+                await self._fail(self._lost_message())
+                return
+            if await self._watchdog_expired():
+                return
+
             try:
                 state = await self.recipe.poll_state(self.browser.page)
             except Exception as e:
@@ -125,28 +175,74 @@ class MeetingBridge:
                 self._set_bridge("lobby")
                 await self._emit()
             elif state == "left":
-                logger.info("[meeting] la página reporta salida")
-                await self.leave()
+                logger.info("[meeting] la reunión terminó o la sacaron")
+                await self.leave(reason="ended")
                 return
+
+            if s.bridge == "in_meeting" and await self._alone_expired():
+                logger.info("[meeting] sola en la reunión: saliendo")
+                await self.leave(reason="alone")
+                return
+
+    async def _watchdog_expired(self) -> bool:
+        """WS interno caído > WS_DEAD_S: 1 reintento, luego error."""
+        if self._page_ws is not None or self._ws_down_since is None:
+            return False
+        down = time.monotonic() - self._ws_down_since
+        if down < WS_DEAD_S:
+            return False
+        if not self._ws_retried:
+            self._ws_retried = True
+            self._ws_down_since = time.monotonic()
+            # El script de la página reintenta solo cada 3 s; si la página
+            # responde, darle otra ventana completa antes de rendirse.
+            try:
+                await asyncio.wait_for(self.browser.page.evaluate("1"), 5)
+                logger.warning(
+                    "[meeting] WS interno caído %ds; página viva, reintento",
+                    int(down),
+                )
+                return False
+            except Exception:
+                pass
+        await self._fail("Se perdió la conexión con la página de la reunión")
+        return True
+
+    async def _alone_expired(self) -> bool:
+        if MEETING_ALONE_TIMEOUT_MIN <= 0:
+            return False
+        try:
+            alone = await self.recipe.is_alone(self.browser.page)
+        except Exception:
+            alone = False
+        if not alone:
+            self._alone_since = None
+            return False
+        now = time.monotonic()
+        if self._alone_since is None:
+            self._alone_since = now
+            logger.info("[meeting] sin otros participantes")
+        return now - self._alone_since >= MEETING_ALONE_TIMEOUT_MIN * 60
 
     async def _max_duration(self):
         await asyncio.sleep(MEETING_MAX_DURATION_MIN * 60)
         if not self._closing:
             logger.info("[meeting] duración máxima alcanzada")
-            self.session.error = "Duración máxima de la reunión alcanzada"
-            await self.leave()
+            await self.leave(reason="max_duration")
 
-    async def leave(self, reason: str = "user"):
+    async def leave(self, reason: EndReason = "user"):
         if self._closing:
             return
         self._closing = True
         logger.info("[meeting] leave (%s)", reason)
+        self.session.end_reason = reason
         self._set_bridge("leaving")
         await self._emit()
         await self.brain_stop(emit=False)
         try:
             await self._send_control({"type": "bye"})
-            if self.browser.page:
+            # Si la reunión ya terminó o el browser murió no hay botón que pulsar.
+            if self.browser.alive and reason != "ended":
                 try:
                     await self.recipe.leave(self.browser.page)
                 except Exception as e:
@@ -154,6 +250,8 @@ class MeetingBridge:
         finally:
             if self.session.bridge != "error":
                 self._set_bridge("closed")
+            self.session.ended_at = time.time()
+            self._left.set()
             await self._emit()
 
     async def _cleanup(self):
@@ -278,6 +376,8 @@ class MeetingBridge:
         if self._page_ws:
             logger.warning("[meeting] WS interno duplicado, reemplazo")
         self._page_ws = ws
+        self._ws_down_since = None
+        self._ws_retried = False
         logger.info("[meeting] WS interno conectado")
         try:
             async for raw in ws.iter_text():
@@ -293,6 +393,8 @@ class MeetingBridge:
         finally:
             if self._page_ws is ws:
                 self._page_ws = None
+                if not self._closing:
+                    self._ws_down_since = time.monotonic()
 
     async def _on_page_message(self, msg: dict):
         mtype = msg.get("type")
@@ -317,7 +419,7 @@ class MeetingBridge:
             # La página es señal suplementaria; la receta manda (poll_loop).
             if state == "left" and s.bridge == "in_meeting":
                 logger.info("[meeting] página reporta left")
-                await self.leave(reason="page_left")
+                await self.leave(reason="ended")
         elif mtype == "log":
             logger.debug("[meeting:page] %s", str(msg.get("text"))[:200])
         elif mtype == "ready":

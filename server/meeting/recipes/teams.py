@@ -38,6 +38,10 @@ class TeamsRecipe(JoinRecipe):
             {"text": "Abandonar"},
             {"text": "Leave"},
         ],
+        "alone": [
+            {"text": "Esperando a que otros se unan"},
+            {"text": "Waiting for others to join"},
+        ],
         "left": [
             {"text": "Has abandonado la reunión"},
             {"text": "You left the meeting"},

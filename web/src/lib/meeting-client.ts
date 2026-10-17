@@ -23,6 +23,9 @@ export type BrainState = "off" | "starting" | "active" | "stopping";
 
 export type MeetingTranscriptRole = "participant" | "manglara";
 
+/** Why a meeting ended (only with bridge = "closed"). */
+export type EndReason = "user" | "ended" | "alone" | "max_duration";
+
 export interface MeetingState {
   id: string;
   provider: MeetingProvider;
@@ -32,6 +35,7 @@ export interface MeetingState {
   mic_enabled: boolean;
   cam_enabled: boolean;
   error: string | null;
+  end_reason: EndReason | null;
 }
 
 export type MeetingEvent =
@@ -51,6 +55,7 @@ const BRIDGE_STATES: readonly BridgeState[] = [
 ];
 const BRAIN_STATES: readonly BrainState[] = ["off", "starting", "active", "stopping"];
 const PROVIDERS: readonly MeetingProvider[] = ["teams", "zoom", "meet"];
+const END_REASONS: readonly EndReason[] = ["user", "ended", "alone", "max_duration"];
 
 /** A bridge in one of these states is done: no more events will arrive. */
 export function isTerminal(bridge: BridgeState): boolean {
@@ -77,6 +82,9 @@ export function parseMeetingState(v: unknown): MeetingState | null {
     mic_enabled: v.mic_enabled === true,
     cam_enabled: v.cam_enabled === true,
     error: typeof v.error === "string" && v.error ? v.error : null,
+    end_reason: END_REASONS.includes(v.end_reason as EndReason)
+      ? (v.end_reason as EndReason)
+      : null,
   };
 }
 

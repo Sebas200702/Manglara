@@ -15,6 +15,7 @@ const STATE = {
   mic_enabled: false,
   cam_enabled: true,
   error: null,
+  end_reason: null,
 };
 
 describe("parseMeetingEvent", () => {
@@ -30,6 +31,13 @@ describe("parseMeetingEvent", () => {
 
   test("rejects a state with an unknown provider", () => {
     expect(parseMeetingState({ ...STATE, provider: "webex" })).toBeNull();
+  });
+
+  test("keeps known end reasons and drops unknown ones", () => {
+    expect(parseMeetingState({ ...STATE, bridge: "closed", end_reason: "alone" })?.end_reason).toBe(
+      "alone"
+    );
+    expect(parseMeetingState({ ...STATE, end_reason: "kicked" })?.end_reason).toBeNull();
   });
 
   test("normalizes an empty error to null", () => {

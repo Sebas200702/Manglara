@@ -7,6 +7,7 @@ import {
   meetingApi,
   type BrainState,
   type BridgeState,
+  type EndReason,
   type MeetingProvider,
 } from "../../lib/meeting-client";
 import { useMeetingScreenStore } from "./meeting-screen-store";
@@ -65,6 +66,13 @@ export function deriveStatus(
   }
 }
 
+export const END_REASON_NOTICES: Record<EndReason, string> = {
+  user: "Manglara salió de la reunión.",
+  ended: "La reunión terminó.",
+  alone: "Manglara salió porque se quedó sola en la reunión.",
+  max_duration: "Manglara salió: se alcanzó la duración máxima de la reunión.",
+};
+
 export const PROVIDER_LABELS: Record<MeetingProvider, string> = {
   teams: "Microsoft Teams",
   zoom: "Zoom",
@@ -92,6 +100,7 @@ export function useMeetingScreen() {
   const micOn = useMeetingScreenStore((s) => s.micOn);
   const camOn = useMeetingScreenStore((s) => s.camOn);
   const error = useMeetingScreenStore((s) => s.error);
+  const endReason = useMeetingScreenStore((s) => s.endReason);
   const transcripts = useMeetingScreenStore((s) => s.transcripts);
   const connecting = useMeetingScreenStore((s) => s.connecting);
   const busy = useMeetingScreenStore((s) => s.busy);
@@ -104,6 +113,8 @@ export function useMeetingScreen() {
   /** Joined (or joining) and not finished: the link input is locked. */
   const sessionLive = connecting || (bridgeState !== null && !isTerminal(bridgeState));
   const status = deriveStatus(bridgeState, brainState, connecting);
+  const notice =
+    bridgeState === "closed" && endReason ? END_REASON_NOTICES[endReason] : null;
 
   const subscribe = (id: string) => {
     eventsRef.current?.close();
@@ -233,6 +244,7 @@ export function useMeetingScreen() {
     micOn,
     camOn,
     error,
+    notice,
     transcripts,
     connecting,
     busy,

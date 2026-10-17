@@ -8,6 +8,7 @@ RTCPeerConnection ya están activos cuando la página del proveedor carga.
 import json
 import logging
 import os
+from typing import Callable
 from urllib.parse import urljoin, urlparse
 
 from playwright.async_api import async_playwright
@@ -69,6 +70,26 @@ class MeetingBrowser:
         self._browser = None
         self._context = None
         self.page = None
+        # Se llama UNA vez si el browser/página muere sin que lo cerremos
+        # nosotros (crash, proceso matado, pestaña cerrada a mano).
+        self.on_lost: Callable[[str], None] | None = None
+        self.lost_reason: str | None = None
+        self._closing = False
+
+    def _lost(self, reason: str):
+        if self._closing or self.lost_reason:
+            return
+        self.lost_reason = reason
+        logger.error("[meeting] browser perdido: %s", reason)
+        if self.on_lost:
+            try:
+                self.on_lost(reason)
+            except Exception as e:
+                logger.warning("[meeting] on_lost falló: %s", e)
+
+    @property
+    def alive(self) -> bool:
+        return self.page is not None and self.lost_reason is None
 
     async def launch(self, ws_url: str, session_id: str, selectors: dict):
         self._pw = await async_playwright().start()
@@ -131,6 +152,13 @@ class MeetingBrowser:
         # El contexto persistente abre con una pestaña en blanco: reusarla.
         pages = self._context.pages
         self.page = pages[0] if pages else await self._context.new_page()
+        self.page.on("crash", lambda _: self._lost("la pestaña de la reunión se colgó"))
+        self.page.on("close", lambda _: self._lost("la pestaña de la reunión se cerró"))
+        self._context.on("close", lambda _: self._lost("el navegador se cerró"))
+        if self._browser:
+            self._browser.on(
+                "disconnected", lambda _: self._lost("el navegador se desconectó")
+            )
         logger.info(
             "[meeting] browser listo (headless=%s, perfil=%s)",
             MEETING_HEADLESS,
@@ -138,6 +166,7 @@ class MeetingBrowser:
         )
 
     async def close(self):
+        self._closing = True
         if self._context:
             try:
                 await self._context.close()

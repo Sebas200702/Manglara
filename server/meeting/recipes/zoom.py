@@ -40,6 +40,9 @@ class ZoomRecipe(JoinRecipe):
             {"text": "Unmute microphone"},
             {"text": "Silenciar micrófono"},
         ],
+        # Zoom web no muestra un aviso de "solo tú": sin auto-leave por
+        # soledad (la salida por fin de reunión sí funciona).
+        "alone": [],
         "left": [
             {"text": "You have left the meeting"},
             {"text": "Has salido de la reunión"},

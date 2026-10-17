@@ -64,6 +64,7 @@ export function MeetingScreen() {
     micOn,
     camOn,
     error,
+    notice,
     transcripts,
     connecting,
     busy,
@@ -215,6 +216,15 @@ export function MeetingScreen() {
                   className="w-full max-w-xl rounded-2xl border border-status-error/20 bg-status-error px-4 py-2.5 text-center text-xs font-bold text-white shadow-lg"
                 >
                   {error}
+                </p>
+              )}
+
+              {notice && !error && (
+                <p
+                  role="status"
+                  className="w-full max-w-xl rounded-2xl border border-navy-200 bg-navy-50/95 px-4 py-2.5 text-center text-xs font-bold text-navy-700 shadow-md"
+                >
+                  {notice}
                 </p>
               )}
 

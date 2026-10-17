@@ -32,6 +32,14 @@ class MediaState:
     cam_enabled: bool = True  # video del bot hacia la reunión
 
 
+EndReason = Literal[
+    "user",  # el usuario pulsó Desconectar
+    "ended",  # la reunión terminó / la página reporta salida
+    "alone",  # se quedó sola demasiado tiempo
+    "max_duration",  # MEETING_MAX_DURATION_MIN alcanzado
+]
+
+
 @dataclass
 class MeetingSession:
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
@@ -42,7 +50,10 @@ class MeetingSession:
     brain: BrainState = "off"
     media: MediaState = field(default_factory=MediaState)
     error: str | None = None
+    # Por qué terminó (solo con bridge=closed); la UI lo muestra como aviso.
+    end_reason: EndReason | None = None
     created_at: float = field(default_factory=time.time)
+    ended_at: float | None = None
 
     def public_state(self) -> dict:
         """Lo que la UI necesita. Sin URLs completas (privacidad)."""
@@ -55,4 +66,5 @@ class MeetingSession:
             "mic_enabled": self.media.mic_enabled,
             "cam_enabled": self.media.cam_enabled,
             "error": self.error,
+            "end_reason": self.end_reason,
         }

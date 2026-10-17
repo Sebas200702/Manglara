@@ -43,6 +43,8 @@ MEETING_HEADLESS = os.getenv("MEETING_HEADLESS", "true").lower() in (
 # (necesario para Meet). Vacío = perfil efímero (invitado).
 MEETING_CHROME_PROFILE_DIR = os.getenv("MEETING_CHROME_PROFILE_DIR", "")
 MEETING_MAX_DURATION_MIN = int(os.getenv("MEETING_MAX_DURATION_MIN", "180"))
+# Sale sola si es la única participante este tiempo (0 = nunca).
+MEETING_ALONE_TIMEOUT_MIN = float(os.getenv("MEETING_ALONE_TIMEOUT_MIN", "10"))
 # Página del avatar que el bot usa como cámara (ruta de la web app). Una ruta
 # relativa se resuelve contra MEETING_WEB_URL; una URL absoluta se usa tal cual.
 MEETING_AVATAR_URL = os.getenv("MEETING_AVATAR_URL", "/meeting/avatar")

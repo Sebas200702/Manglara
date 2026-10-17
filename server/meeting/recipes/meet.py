@@ -13,6 +13,7 @@ from .base import (
     poll_with_selectors,
     click_first,
     click_mic_button,
+    set_toggle,
     fill_first,
 )
 
@@ -125,13 +126,17 @@ class MeetRecipe(JoinRecipe):
         )
 
     async def set_cam(self, page, enabled: bool):
-        await click_first(
+        await set_toggle(
             page,
-            [
-                {"text": "Activar cámara" if enabled else "Desactivar cámara"},
-                {"text": "Turn on camera" if enabled else "Turn off camera"},
+            enabled,
+            # Visibles con la cámara APAGADA:
+            when_off=[
+                {"text": "Activar cámara"},
+                {"text": "Turn on camera"},
             ],
-            timeout_ms=8000,
-            # "Activar cámara" está contenido en "Desactivar cámara".
-            anchored=True,
+            # Visibles con la cámara ENCENDIDA:
+            when_on=[
+                {"text": "Desactivar cámara"},
+                {"text": "Turn off camera"},
+            ],
         )

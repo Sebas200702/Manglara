@@ -11,6 +11,7 @@ from .base import (
     JoinRecipe,
     click_first,
     click_mic_button,
+    set_toggle,
     fill_first,
     press_until_gone,
 )
@@ -53,6 +54,11 @@ class TeamsRecipe(JoinRecipe):
             {"text": "Waiting for others to join"},
         ],
         "left": [
+            # Verificado 2026-10-17: al expulsar al bot.
+            {"text": "Se le ha quitado de la reunión"},
+            {"text": "You've been removed from this meeting"},
+            {"text": "Volver a unirse"},
+            {"text": "Rejoin"},
             {"text": "Has abandonado la reunión"},
             {"text": "You left the meeting"},
             {"text": "Se ha acabado la reunión"},
@@ -133,15 +139,19 @@ class TeamsRecipe(JoinRecipe):
         )
 
     async def set_cam(self, page, enabled: bool):
-        await click_first(
+        await set_toggle(
             page,
-            # Verificado 2026-10-17: encendida = "Apagar la cámara".
-            [
-                {"text": "Encender la cámara" if enabled else "Apagar la cámara"},
-                {"text": "Activar cámara" if enabled else "Desactivar cámara"},
-                {"text": "Turn camera on" if enabled else "Turn camera off"},
+            enabled,
+            # Visibles con la cámara APAGADA:
+            when_off=[
+                {"text": "Encender la cámara"},
+                {"text": "Activar cámara"},
+                {"text": "Turn camera on"},
             ],
-            timeout_ms=8000,
-            # "Activar cámara" está contenido en "Desactivar cámara".
-            anchored=True,
+            # Visibles con la cámara ENCENDIDA:
+            when_on=[
+                {"text": "Apagar la cámara"},
+                {"text": "Desactivar cámara"},
+                {"text": "Turn camera off"},
+            ],
         )

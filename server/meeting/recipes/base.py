@@ -204,19 +204,50 @@ async def fill_first(page, candidates: list, value: str) -> bool:
         return False
 
 
-async def click_mic_button(page, enable: bool, when_muted: list, when_live: list):
-    """Lleva el mic de la reunión al estado pedido (best-effort).
+async def set_toggle(page, enable: bool, when_off: list, when_on: list) -> bool:
+    """Lleva un botón de estado (mic, cámara) al estado pedido y lo verifica.
 
-    `when_muted`: botones visibles con el mic SILENCIADO (p. ej. "Unmute").
-    `when_live`: botones visibles con el mic ABIERTO (p. ej. "Mute").
-    Para abrir se pulsa un botón de `when_muted`; si ya se ve uno de
-    `when_live`, ya está abierto y no se toca (y al revés para silenciar).
+    `when_off`: botones visibles con el dispositivo APAGADO (p. ej. "Unmute",
+    "Encender la cámara"); `when_on`: visibles con él ENCENDIDO ("Mute",
+    "Apagar la cámara"). Para encender se pulsa uno de `when_off`. Si ya se
+    ve el estado pedido no se toca. Tras el click se comprueba que la etiqueta
+    cambió; si no (algunos proveedores ignoran el click sintético sobre el
+    span interno), se repite con un click DOM directo sobre el botón.
     """
-    already = when_live if enable else when_muted
-    to_click = when_muted if enable else when_live
-    if await _any_visible(page, already):
+    target = when_on if enable else when_off
+    to_click = when_off if enable else when_on
+    if await _any_visible(page, target):
         return True
-    return await click_first(page, to_click, timeout_ms=8000, anchored=True)
+    if not await click_first(page, to_click, timeout_ms=8000, anchored=True):
+        return False
+    for _ in range(2):
+        await page.wait_for_timeout(800)
+        if await _any_visible(page, target):
+            return True
+        texts = [c["text"] for c in to_click if "text" in c]
+        try:
+            await page.evaluate(
+                """(texts) => {
+                  const norm = (x) => (x || '').trim().toLowerCase();
+                  const starts = (v) => texts.some((t) => norm(v).startsWith(norm(t)));
+                  const b = [...document.querySelectorAll('button, [role=button]')].find(
+                    (x) => starts(x.getAttribute('aria-label')) || starts(x.innerText));
+                  if (b) b.click();
+                }""",
+                texts,
+            )
+        except Exception:
+            pass
+    await page.wait_for_timeout(800)
+    ok = await _any_visible(page, target)
+    if not ok:
+        logger.warning("[recipe] el botón no cambió de estado: %s", _describe(to_click))
+    return ok
+
+
+async def click_mic_button(page, enable: bool, when_muted: list, when_live: list):
+    """Mic de la reunión al estado pedido (ver set_toggle)."""
+    return await set_toggle(page, enable, when_off=when_muted, when_on=when_live)
 
 
 async def _any_visible(page, candidates: list) -> bool:

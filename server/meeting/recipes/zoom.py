@@ -13,6 +13,7 @@ from .base import (
     JoinRecipe,
     click_first,
     click_mic_button,
+    set_toggle,
     fill_first,
 )
 
@@ -133,13 +134,17 @@ class ZoomRecipe(JoinRecipe):
         )
 
     async def set_cam(self, page, enabled: bool):
-        await click_first(
+        await set_toggle(
             page,
-            [
-                {"text": "Start Video" if enabled else "Stop Video"},
-                {"text": "Iniciar vídeo" if enabled else "Detener vídeo"},
+            enabled,
+            # Visibles con la cámara APAGADA:
+            when_off=[
+                {"text": "Start Video"},
+                {"text": "Iniciar vídeo"},
             ],
-            timeout_ms=8000,
-            # "Activar cámara" está contenido en "Desactivar cámara".
-            anchored=True,
+            # Visibles con la cámara ENCENDIDA:
+            when_on=[
+                {"text": "Stop Video"},
+                {"text": "Detener vídeo"},
+            ],
         )

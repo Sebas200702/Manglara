@@ -83,6 +83,15 @@ class GeminiLiveClient:
             turn_complete=False,
         )
 
+    async def send_text(self, text: str):
+        """Complete user turn from text: the model answers it right away."""
+        if not self.session:
+            return
+        await self.session.send_client_content(
+            turns=types.Content(role="user", parts=[types.Part(text=text)]),
+            turn_complete=True,
+        )
+
     async def receive_loop(self) -> AsyncIterator[bytes]:
         while True:
             async for response in self.session.receive():

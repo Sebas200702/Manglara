@@ -3,6 +3,9 @@
 La receta del proveedor (recipes/, T1.6) se inyecta como dependencia para
 el join y los clicks en la UI de la reunión. Este módulo no sabe de Teams,
 Zoom ni Meet.
+
+El cerebro (Gemini Live, brain.py) es opcional y se enciende/apaga dentro de
+la reunión: Manglara entra "dormida" y solo escucha/habla tras brain_start().
 """
 
 import asyncio
@@ -14,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from fastapi import WebSocket, WebSocketDisconnect
 
 from config import MEETING_MAX_DURATION_MIN, PORT
+from .brain import MeetingBrain
 from .browser import MeetingBrowser
 from .models import MeetingSession
 
@@ -39,12 +43,17 @@ class MeetingBridge:
         recipe: "JoinRecipe",
         on_event: Callable[[MeetingSession], Awaitable[None]] | None = None,
         on_remote_pcm: Callable[[bytes], Awaitable[None]] | None = None,
+        on_transcript: Callable[[str, str], Awaitable[None]] | None = None,
     ):
         self.session = session
         self.recipe = recipe
         self.on_event = on_event
         self.on_remote_pcm = on_remote_pcm
+        # (role, text) con role "participant" | "manglara".
+        self.on_transcript = on_transcript
         self.browser = MeetingBrowser()
+        self.brain: MeetingBrain | None = None
+        self._brain_lock = asyncio.Lock()
         self._page_ws: WebSocket | None = None
         self._closing = False
         self._max_duration_task: asyncio.Task | None = None
@@ -134,6 +143,7 @@ class MeetingBridge:
         logger.info("[meeting] leave (%s)", reason)
         self._set_bridge("leaving")
         await self._emit()
+        await self.brain_stop(emit=False)
         try:
             await self._send_control({"type": "bye"})
             if self.browser.page:
@@ -149,17 +159,103 @@ class MeetingBridge:
     async def _cleanup(self):
         if self._max_duration_task and not self._max_duration_task.done():
             self._max_duration_task.cancel()
+        await self.brain_stop(emit=False)
         await self.browser.close()
 
+    # -- cerebro (Gemini Live on/off) -----------------------------------------
+    async def brain_start(self):
+        """Activa la interacción. Solo dentro de la reunión."""
+        s = self.session
+        async with self._brain_lock:
+            if s.bridge != "in_meeting":
+                raise ValueError("Manglara aún no está dentro de la reunión")
+            if s.brain in ("starting", "active"):
+                return
+            s.brain = "starting"
+            s.error = None
+            await self._emit()
+            brain = MeetingBrain(
+                on_bot_pcm=self.send_bot_pcm,
+                on_transcript=self._brain_transcript,
+                on_turn_complete=self._brain_turn_complete,
+                on_interrupted=self._brain_interrupted,
+                on_fatal=self._brain_fatal,
+            )
+            try:
+                await brain.start()
+            except Exception as e:
+                await brain.stop()
+                s.brain = "off"
+                s.error = f"No se pudo iniciar Gemini Live: {str(e)[:200]}"
+                logger.error("[meeting] brain_start falló: %s", e)
+                await self._emit()
+                raise
+            self.brain = brain
+            s.brain = "active"
+            logger.info("[meeting] %s brain=active", s.id[:8])
+        # Su voz hacia la reunión se abre al activarla (Silenciar la vuelve a cerrar).
+        await self.set_mic(True)
+
+    async def brain_stop(self, emit: bool = True):
+        """Apaga la interacción: cierra Gemini y silencia. Sigue en la reunión."""
+        s = self.session
+        async with self._brain_lock:
+            brain, self.brain = self.brain, None
+            if not brain and s.brain == "off":
+                return
+            s.brain = "stopping"
+            if emit:
+                await self._emit()
+            if brain:
+                await brain.stop()
+            s.brain = "off"
+            logger.info("[meeting] %s brain=off", s.id[:8])
+        await self._send_control({"type": "flush"})
+        if self._closing or not self.browser.page:
+            # Saliendo: basta con cerrar el track falso, sin clicks en la UI.
+            s.media.mic_enabled = False
+            await self._send_control({"type": "set_mic", "enabled": False})
+            if emit:
+                await self._emit()
+        else:
+            await self.set_mic(False, emit=emit)
+
+    async def _brain_transcript(self, role: str, text: str):
+        public_role = "manglara" if role == "model" else "participant"
+        if public_role == "manglara":
+            # Lipsync del avatar dentro de la reunión.
+            await self._send_control({"type": "lip_text", "text": text})
+        if self.on_transcript:
+            try:
+                await self.on_transcript(public_role, text)
+            except Exception as e:
+                logger.warning("[meeting] on_transcript falló: %s", e)
+
+    async def _brain_turn_complete(self):
+        await self._send_control({"type": "turn_end"})
+
+    async def _brain_interrupted(self):
+        # Barge-in: el audio ya entregado a la página queda obsoleto.
+        await self._send_control({"type": "flush"})
+
+    async def _brain_fatal(self, message: str):
+        logger.error("[meeting] cerebro apagado por error: %s", message)
+        self.brain = None
+        self.session.brain = "off"
+        self.session.error = message
+        await self._send_control({"type": "flush"})
+        await self.set_mic(False)
+
     # -- controles de media --------------------------------------------------
-    async def set_mic(self, enabled: bool):
+    async def set_mic(self, enabled: bool, emit: bool = True):
         self.session.media.mic_enabled = enabled
         await self._send_control({"type": "set_mic", "enabled": enabled})
         try:
             await self.recipe.set_mic(self.browser.page, enabled)
         except Exception as e:
             logger.warning("[meeting] set_mic receta falló: %s", e)
-        await self._emit()
+        if emit:
+            await self._emit()
 
     async def set_cam(self, enabled: bool):
         self.session.media.cam_enabled = enabled
@@ -195,12 +291,20 @@ class MeetingBridge:
     async def _on_page_message(self, msg: dict):
         mtype = msg.get("type")
         if mtype == "remote_pcm":
-            if self.on_remote_pcm and msg.get("data"):
+            if not msg.get("data"):
+                return
+            try:
+                pcm = base64.b64decode(msg["data"])
+            except Exception as e:
+                logger.warning("[meeting] pcm inválido: %s", e)
+                return
+            if self.brain:
+                await self.brain.feed_remote_pcm(pcm)
+            if self.on_remote_pcm:
                 try:
-                    pcm = base64.b64decode(msg["data"])
                     await self.on_remote_pcm(pcm)
                 except Exception as e:
-                    logger.warning("[meeting] pcm inválido: %s", e)
+                    logger.warning("[meeting] on_remote_pcm falló: %s", e)
         elif mtype == "meeting_state":
             state = msg.get("state")
             s = self.session

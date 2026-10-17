@@ -180,14 +180,17 @@
     micTrack = micDest.stream.getAudioTracks()[0];
   }
 
-  // Chained playback cursor so bot_pcm chunks play gaplessly.
+  // Chained playback cursor so bot_pcm chunks play gaplessly. Gemini streams
+  // far ahead of real time, so many sources can be scheduled at once; they are
+  // tracked so a barge-in / brain stop can drop the stale tail ("flush").
   var playCursor = 0;
+  var pendingSources = [];
   function playBotPcm(b64) {
     try {
       ensureMic();
       var ctx = audioCtx();
       var bin = atob(b64);
-      var n = bin.length / 2;
+      var n = Math.floor(bin.length / 2);
       if (n <= 0) return;
       var buf = ctx.createBuffer(1, n, BOT_RATE);
       var ch = buf.getChannelData(0);
@@ -205,10 +208,26 @@
       if (playCursor < now) playCursor = now;
       src.start(playCursor);
       playCursor += buf.duration;
-      if (playCursor - now > 10) playCursor = now;
+      pendingSources.push(src);
+      src.onended = function () {
+        var k = pendingSources.indexOf(src);
+        if (k >= 0) pendingSources.splice(k, 1);
+      };
     } catch (err) {
       log("playBotPcm error: " + err);
     }
+  }
+
+  function flushBotAudio() {
+    var list = pendingSources;
+    pendingSources = [];
+    for (var i = 0; i < list.length; i++) {
+      try {
+        list[i].onended = null;
+        list[i].stop();
+      } catch (_) {}
+    }
+    playCursor = 0;
   }
 
   function setMic(on) {
@@ -432,6 +451,13 @@
         break;
       case "set_cam":
         setCam(msg.enabled);
+        break;
+      case "flush":
+        flushBotAudio();
+        break;
+      case "lip_text":
+      case "turn_end":
+        // Consumed by the avatar camera (Fase 4).
         break;
       case "bye":
         wsDead = true;

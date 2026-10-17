@@ -95,7 +95,15 @@ async def join_meeting(req: JoinRequest):
     async def on_event(s: MeetingSession):
         await _broadcast(s)
 
-    bridge = MeetingBridge(session, get_recipe(provider), on_event=on_event)
+    async def on_transcript(role: str, text: str):
+        await push_transcript(session.id, role, text)
+
+    bridge = MeetingBridge(
+        session,
+        get_recipe(provider),
+        on_event=on_event,
+        on_transcript=on_transcript,
+    )
     TASKS[session.id] = asyncio.create_task(bridge.run())
     return {"id": session.id, **session.public_state()}
 
@@ -115,6 +123,27 @@ async def leave_meeting(session_id: str):
     bridge = _get_bridge_or_404(session_id)
     await bridge.leave()
     return {"ok": True}
+
+
+@router.post("/{session_id}/brain/start")
+async def brain_start(session_id: str):
+    bridge = _get_bridge_or_404(session_id)
+    try:
+        await bridge.brain_start()
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    except Exception:
+        raise HTTPException(
+            502, bridge.session.error or "No se pudo iniciar Gemini Live"
+        )
+    return {"ok": True, "brain": bridge.session.brain}
+
+
+@router.post("/{session_id}/brain/stop")
+async def brain_stop(session_id: str):
+    bridge = _get_bridge_or_404(session_id)
+    await bridge.brain_stop()
+    return {"ok": True, "brain": bridge.session.brain}
 
 
 @router.post("/{session_id}/mic")

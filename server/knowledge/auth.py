@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import secrets
 import time
 from collections import deque
@@ -41,11 +42,29 @@ _cached_key: tuple[str, bytes] | None = None
 
 
 def _key() -> bytes:
+    """Clave HMAC de la cookie. Preferencia explícita (SESSION_SECRET);
+    si no hay, se deriva de la clave del gestor o de su hash — importante
+    cuando en el entorno SOLO existe ADMIN_PASSWORD_HASH y no la clave en
+    claro: con una constante vacía cualquiera forjaría la cookie."""
     global _cached_key
-    secret = config.SESSION_SECRET or (config.ADMIN_PASSWORD or "")
-    if _cached_key is None or _cached_key[0] != secret:
-        _cached_key = (secret, hashlib.sha256(secret.encode()).digest())
+    if _cached_key is None or _cached_key[0] != _secret_source():
+        _cached_key = (_secret_source(), hashlib.sha256(_secret_source().encode()).digest())
     return _cached_key[1]
+
+
+def _secret_source() -> str:
+    if config.SESSION_SECRET:
+        return config.SESSION_SECRET
+    if config.ADMIN_PASSWORD:
+        return config.ADMIN_PASSWORD
+    if config.ADMIN_PASSWORD_HASH:
+        return config.ADMIN_PASSWORD_HASH
+    if os.getenv("SKIP_ADMIN_WARNING") != "1":
+        logger.warning(
+            "[auth] sin ADMIN_PASSWORD/HASH ni SESSION_SECRET: la sesión se "
+            "firma con una constante (solo aceptable en desarrollo)"
+        )
+    return "manglara-dev-insecure-session"
 
 
 def check_password(candidate: str) -> bool:

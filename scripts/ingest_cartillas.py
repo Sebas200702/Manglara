@@ -14,9 +14,10 @@ import sys
 import uuid
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
-
+import httpx
 from dotenv import load_dotenv
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
@@ -64,7 +65,7 @@ async def main():
                 continue
 
             chunks = chunk_pages(pages)
-            embed_chunks(chunks)
+            await embed_chunks(chunks)
 
             file_uri = None
             try:

@@ -1,9 +1,12 @@
 """Vectorización por la API de Gemini.
 
-Reemplaza a fastembed+ONNX: en serverless no hay sitio para bajar el
-modelo local y sí hay una API que ya usamos. gemini-embedding-001
-admite output_dimensionality de 128 a 3072; pedimos 384 para mantener
-la columna `chunks.embedding vector(384)` sin migración destructiva.
+Reemplaza fastembed+ONNX: en serverless no cabe el modelo local y ya
+pagamos la API. Modelo: gemini-embedding-2 (8.192 tokens de entrada,
+auto-normalización en dims truncadas). Batch REAL vía batchEmbedContents:
+1 embedding por texto — con embed_content la v2 agrega TODO el lote en
+UN solo vector y sería inútil para RAG.
+Dimension 384: mantiene la columna `chunks.embedding vector(384)` sin
+migración destructiva.
 """
 
 import asyncio
@@ -11,35 +14,37 @@ import logging
 import os
 
 import httpx
-from google import genai
-from google.genai import types
 
 import db
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
+EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-2")
 EMBEDDING_DIM = int(os.getenv("GEMINI_EMBEDDING_DIM", "384"))
-EMBED_BATCH = int(os.getenv("GEMINI_EMBEDDING_BATCH", "32"))
+EMBED_BATCH = int(os.getenv("GEMINI_EMBEDDING_BATCH", "16"))
 EMBED_MAX_RETRIES = 4
 _upsert_page_size = EMBED_BATCH
 
-_embedder: genai.Client | None = None
+_embedder = None
 
 
-def get_embedding_client() -> genai.Client:
+def get_embedding_client():
+    """Sigue existiendo para digests (generate_digest usa genai.Client);
+    los embeddings ya son solo REST con x-goog-api-key."""
     global _embedder
     if _embedder is None:
         from config import GEMINI_API_KEY
+        from google import genai as genai_module
 
-        _embedder = genai.Client(api_key=GEMINI_API_KEY)
+        _embedder = genai_module.Client(api_key=GEMINI_API_KEY)
     return _embedder
 
 
 def _normalize(values: list[float]) -> list[float]:
-    """Los vectores truncados (<=3072 dims) no vienen normalizados según la
-    documentación. La distancia coseno (<=>) es invariante a la escala,
-    pero al dejarlos unitarios el índice y la similitud quedan canónicos."""
+    """gemini-embedding-001 con dims != 3072 requiere normalización manual
+    según la documentación. Con d coseno no cambia el resultado, pero al
+    dejar el vector unitario la comparación queda canónica y da igual si
+    más adelante se usa otro índice."""
     norm = sum(v * v for v in values) ** 0.5
     if not norm:
         return values
@@ -47,17 +52,30 @@ def _normalize(values: list[float]) -> list[float]:
 
 
 async def _embed_with_backoff(client, texts: list[str], task_type: str) -> list[list[float]]:
-    config = types.EmbedContentConfig(
-        output_dimensionality=EMBEDDING_DIM,
-        task_type=task_type,
-    )
+    """gemini-embedding-2 agrega todas las entradas en UN vector si las pasa
+    por `embed_content`, así que el lote va por el endpoint dedicado
+    `batchEmbedContents` (REST directo, ver #probe): 1 embedding por texto.
+    Retries con backoff ante 429/5xx."""
+    base = f"https://generativelanguage.googleapis.com/v1beta/models/{EMBEDDING_MODEL}:batchEmbedContents"
+    requests_body = [
+        {
+            "model": f"models/{EMBEDDING_MODEL}",
+            "content": {"parts": [{"text": t}]},
+            "taskType": task_type,
+            "outputDimensionality": EMBEDDING_DIM,
+        }
+        for t in texts
+    ]
+    from config import GEMINI_API_KEY
+    headers = {"x-goog-api-key": GEMINI_API_KEY}
     for attempt in range(EMBED_MAX_RETRIES):
         try:
-            resp = await client.aio.models.embed_content(
-                model=EMBEDDING_MODEL, contents=texts, config=config
-            )
-            return [_normalize(list(e.values)) for e in resp.embeddings]
-        except Exception as exc:  # 429/5xx/timeout; la API es esencial
+            async with httpx.AsyncClient(timeout=60) as http:
+                resp = await http.post(base, headers=headers,
+                                       json={"requests": requests_body})
+            resp.raise_for_status()
+            return [_normalize(e["values"]) for e in resp.json()["embeddings"]]
+        except Exception as exc:  # 429/5xx/timeout
             wait = 2 ** attempt * 1.5
             logger.warning(
                 "[embedding] lote falló (intento %d/%d): %s — reintento en %.1fs",

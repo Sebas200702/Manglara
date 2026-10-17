@@ -55,37 +55,89 @@ async def insert_chunks(chunks: list[dict]):
 async def search_chunks(
     document_id: str, embedding: list[float], top_k: int = 5
 ) -> list[dict]:
-    payload = {
-        "p_document_id": document_id,
-        "p_embedding": embedding,
-        "p_top_k": top_k,
-    }
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{BASE}/rpc/search_chunks",
-            json=payload,
+    """Búsqueda vectorial LOCAL en un solo documento (mismo motivo que
+    search_chunks_multi: el RPC vía REST devuelve vacíos erráticos)."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"{BASE}/chunks",
+            params={
+                "document_id": f"eq.{document_id}",
+                "select": "document_id,content,page_num,chunk_index,embedding",
+            },
             headers=HEADERS,
         )
         resp.raise_for_status()
-        return resp.json()
+        rows = resp.json()
+    return _rank_by_cosine(rows, embedding, top_k)
 
 
 async def search_chunks_multi(
     document_ids: list[str], embedding: list[float], top_k: int = 10
 ) -> list[dict]:
-    payload = {
-        "p_document_ids": document_ids,
-        "p_embedding": embedding,
-        "p_top_k": top_k,
-    }
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{BASE}/rpc/search_chunks_multi",
-            json=payload,
+    """Búsqueda vectorial LOCAL sobre las filas de chunks.
+
+    El RPC search_chunks_multi vía PostgREST devuelve vacíos erráticos
+    (RLS en chunks sin políticas + cast JSON→vector(384) inestable); con
+    ~100 chunks es más barato y determinístico traer las filas del set
+    activo y hacer el cosine en Python.
+    """
+    if not document_ids:
+        return []
+    id_list = ",".join(document_ids)
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"{BASE}/chunks",
+            params={
+                "document_id": f"in.({id_list})",
+                "select": "document_id,content,page_num,chunk_index,embedding",
+            },
             headers=HEADERS,
         )
         resp.raise_for_status()
-        return resp.json()
+        rows = resp.json()
+    return _rank_by_cosine(rows, embedding, top_k)
+
+
+def _rank_by_cosine(rows: list[dict], embedding: list[float], top_k: int) -> list[dict]:
+    """Ordena por similarity coseno y devuelve las top_k con 'distance'.
+
+    PostgREST devuelve `embedding` como string pgvector "[0.1,0.2,...]"
+    (no como array JSON); aceptamos ambas formas.
+    """
+    def to_vec(raw) -> list[float] | None:
+        if isinstance(raw, list):
+            return raw if all(isinstance(x, (int, float)) for x in raw) else None
+        if isinstance(raw, str) and raw.startswith("["):
+            try:
+                return [float(x) for x in raw[1:-1].split(",") if x.strip()]
+            except ValueError:
+                return None
+        return None
+
+    def norm(v: list[float]) -> float:
+        return sum(x * x for x in v) ** 0.5 or 1.0
+
+    target = embedding
+    target_norm = norm(target)
+    scored: list[tuple[float, dict]] = []
+    for row in rows:
+        vec = to_vec(row.get("embedding"))
+        if not vec:
+            continue
+        dot = sum(a * b for a, b in zip(vec, target))
+        similarity = dot / (norm(vec) * target_norm)
+        scored.append((similarity, row))
+    scored.sort(key=lambda s: s[0], reverse=True)
+    return [
+        {
+            "document_id": row["document_id"],
+            "content": row["content"],
+            "page_num": row["page_num"],
+            "chunk_index": row["chunk_index"],
+            "distance": 1.0 - similarity,
+        }
+        for similarity, row in scored[:top_k]
+    ]
 
 
 async def get_document(document_id: str) -> dict | None:

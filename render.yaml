@@ -32,3 +32,6 @@ services:
         value: "180"
       - key: MEETING_AVATAR_URL
         value: /meeting/avatar
+      # URL pública de la web app (el bot abre ahí /meeting/avatar como cámara).
+      - key: MEETING_WEB_URL
+        sync: false

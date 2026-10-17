@@ -174,6 +174,10 @@ class MeetingBridge:
             s.brain = "starting"
             s.error = None
             await self._emit()
+            # Su voz hacia la reunión se abre ANTES de conectar: la presentación
+            # llega en < 1 s y el click en el botón de mic puede tardar más.
+            # (Silenciar la vuelve a cerrar.)
+            await self.set_mic(True, emit=False)
             brain = MeetingBrain(
                 on_bot_pcm=self.send_bot_pcm,
                 on_transcript=self._brain_transcript,
@@ -188,13 +192,13 @@ class MeetingBridge:
                 s.brain = "off"
                 s.error = f"No se pudo iniciar Gemini Live: {str(e)[:200]}"
                 logger.error("[meeting] brain_start falló: %s", e)
-                await self._emit()
+                await self.set_mic(False)
                 raise
             self.brain = brain
             s.brain = "active"
             logger.info("[meeting] %s brain=active", s.id[:8])
-        # Su voz hacia la reunión se abre al activarla (Silenciar la vuelve a cerrar).
-        await self.set_mic(True)
+        await self._send_control({"type": "avatar_state", "state": "listening"})
+        await self._emit()
 
     async def brain_stop(self, emit: bool = True):
         """Apaga la interacción: cierra Gemini y silencia. Sigue en la reunión."""
@@ -211,6 +215,7 @@ class MeetingBridge:
             s.brain = "off"
             logger.info("[meeting] %s brain=off", s.id[:8])
         await self._send_control({"type": "flush"})
+        await self._send_control({"type": "avatar_state", "state": "idle"})
         if self._closing or not self.browser.page:
             # Saliendo: basta con cerrar el track falso, sin clicks en la UI.
             s.media.mic_enabled = False
@@ -244,6 +249,7 @@ class MeetingBridge:
         self.session.brain = "off"
         self.session.error = message
         await self._send_control({"type": "flush"})
+        await self._send_control({"type": "avatar_state", "state": "idle"})
         await self.set_mic(False)
 
     # -- controles de media --------------------------------------------------
@@ -314,9 +320,25 @@ class MeetingBridge:
                 await self.leave(reason="page_left")
         elif mtype == "log":
             logger.debug("[meeting:page] %s", str(msg.get("text"))[:200])
-        # ready / gum_called: solo telemetría por ahora.
-        elif mtype in ("ready", "gum_called"):
-            logger.debug("[meeting:page] %s %s", mtype, msg.get("state", ""))
+        elif mtype == "ready":
+            # Página nueva o WS reconectado: re-sincronizar su estado local.
+            m = self.session.media
+            await self._send_control({"type": "set_mic", "enabled": m.mic_enabled})
+            await self._send_control({"type": "set_cam", "enabled": m.cam_enabled})
+            await self._send_control(
+                {
+                    "type": "avatar_state",
+                    "state": "listening" if self.brain else "idle",
+                }
+            )
+        elif mtype == "avatar_ready":
+            logger.info("[meeting] avatar listo en la cámara")
+        elif mtype == "avatar_timeout":
+            logger.warning(
+                "[meeting] el avatar no envió frames en 5 s: cámara con logo"
+            )
+        elif mtype == "gum_called":
+            logger.debug("[meeting:page] gum_called")
 
     async def _send_control(self, msg: dict):
         if not self._page_ws:

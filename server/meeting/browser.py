@@ -8,10 +8,16 @@ RTCPeerConnection ya están activos cuando la página del proveedor carga.
 import json
 import logging
 import os
+from urllib.parse import urljoin, urlparse
 
 from playwright.async_api import async_playwright
 
-from config import MEETING_CHROME_PROFILE_DIR, MEETING_HEADLESS
+from config import (
+    MEETING_AVATAR_URL,
+    MEETING_CHROME_PROFILE_DIR,
+    MEETING_HEADLESS,
+    MEETING_WEB_URL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +27,33 @@ with open(_BRIDGE_JS_PATH, encoding="utf-8") as f:
     _BRIDGE_JS = f.read()
 
 
+def resolve_avatar_url() -> str:
+    """URL absoluta de la página del avatar, o "" si no hay web configurada."""
+    raw = (MEETING_AVATAR_URL or "").strip()
+    if not raw:
+        return ""
+    if urlparse(raw).scheme in ("http", "https"):
+        return raw
+    if not MEETING_WEB_URL:
+        return ""
+    return urljoin(MEETING_WEB_URL + "/", raw.lstrip("/"))
+
+
 def build_init_script(ws_url: str, session_id: str, selectors: dict) -> str:
     """Pre-script + bridge. `selectors` viene de la receta del proveedor."""
-    cfg = json.dumps({"wsUrl": ws_url, "sessionId": session_id})
+    avatar_url = resolve_avatar_url()
+    avatar_origin = ""
+    if avatar_url:
+        parts = urlparse(avatar_url)
+        avatar_origin = f"{parts.scheme}://{parts.netloc}"
+    cfg = json.dumps(
+        {
+            "wsUrl": ws_url,
+            "sessionId": session_id,
+            "avatarUrl": avatar_url,
+            "avatarOrigin": avatar_origin,
+        }
+    )
     sel = json.dumps(selectors or {})
     return (
         f"window.__MANGLARA_CFG={cfg};\n"
@@ -51,6 +81,18 @@ class MeetingBrowser:
             "--use-fake-ui-for-media-stream",
             "--no-first-run",
             "--mute-audio",
+            # El avatar (iframe) y el WS interno corren en un origen local
+            # embebido en una página pública https: sin estos flags Chrome
+            # puede bloquearlos (Private/Local Network Access) o frenar el
+            # render de la pestaña y del iframe en segundo plano.
+            "--disable-features=PrivateNetworkAccessSendPreflights,"
+            "PrivateNetworkAccessRespectPreflightResults,"
+            "BlockInsecurePrivateNetworkRequests,LocalNetworkAccessChecks",
+            "--disable-background-timer-throttling",
+            "--disable-renderer-backgrounding",
+            "--disable-backgrounding-occluded-windows",
+            # WebGL del avatar por software si no hay GPU (servidores).
+            "--enable-unsafe-swiftshader",
         ]
         headless = False
         if MEETING_HEADLESS:
@@ -69,6 +111,9 @@ class MeetingBrowser:
                     args=args,
                     viewport={"width": 1280, "height": 720},
                     locale="es-ES",
+                    # La CSP del proveedor bloquearía el WS interno a
+                    # 127.0.0.1 (connect-src) y el iframe del avatar (frame-src).
+                    bypass_csp=True,
                 )
             )
         else:
@@ -78,6 +123,7 @@ class MeetingBrowser:
             self._context = await self._browser.new_context(
                 viewport={"width": 1280, "height": 720},
                 locale="es-ES",
+                bypass_csp=True,
             )
 
         await self._context.grant_permissions(["microphone", "camera"])

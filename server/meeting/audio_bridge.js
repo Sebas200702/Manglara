@@ -1,22 +1,34 @@
 /* Manglara meeting audio bridge — injected via Playwright addInitScript
  * BEFORE the meeting page loads.
  *
- * Expects `window.__MANGLARA_CFG = { wsUrl, sessionId }` set by a tiny
- * pre-script (bridge.py). Re-runs safely on every navigation (guard below).
+ * Expects `window.__MANGLARA_CFG = { wsUrl, sessionId, avatarUrl,
+ * avatarOrigin }` set by a tiny pre-script (browser.py). Re-runs safely on
+ * every navigation (guard below).
  *
  * What it does:
  *  1. Overrides getUserMedia/enumerateDevices -> synthetic MediaStream:
  *       audio track = MediaStreamAudioDestinationNode (fake mic, starts MUTED)
- *       video track = canvas.captureStream(30) (Fase 1: logo animado)
+ *       video track = canvas.captureStream(30): the avatar page (hidden
+ *       iframe, `avatarUrl`) streams ImageBitmap frames that are painted on
+ *       the canvas; an animated logo is the fallback until frames arrive.
  *  2. Tees remote participant audio: patches RTCPeerConnection 'track' events
  *     -> MediaStreamSource -> AudioWorklet downsample 16 kHz mono Int16
  *     -> {type:"remote_pcm"} over the control WebSocket.
  *  3. Plays bot audio: {type:"bot_pcm"} (24 kHz PCM16 from Gemini) ->
- *     AudioBufferSourceNode -> fake mic, gated by set_mic.
+ *     AudioBufferSourceNode -> fake mic, gated by set_mic. The same PCM and
+ *     her transcript (lip_text) go to the avatar iframe for lip-sync.
  *  4. Reports lifecycle: ready / gum_called / meeting_state / left / log.
  */
 (function () {
   "use strict";
+  // add_init_script runs in EVERY frame, including the provider's own iframes
+  // and our avatar iframe. Only the top document is the meeting: a second
+  // bridge in a subframe would steal the control WebSocket.
+  try {
+    if (window.top !== window) return;
+  } catch (_) {
+    return; // cross-origin top: we are a subframe
+  }
   if (window.__manglaraBridgeInstalled) {
     // New navigation in the same context: just re-announce.
     try {
@@ -118,25 +130,55 @@
     return actx;
   }
 
-  /* ---------- fake camera (Fase 1: animated placeholder) ---------- */
+  /* ---------- fake camera: avatar frames, logo fallback ---------- */
+  var CAM_W = 640;
+  var CAM_H = 480;
   var camCanvas = document.createElement("canvas");
-  camCanvas.width = 640;
-  camCanvas.height = 480;
+  camCanvas.width = CAM_W;
+  camCanvas.height = CAM_H;
   var camStream = null;
   var camTrack = null;
   var camOn = true;
   var frame = 0;
+  // Avatar frames older than this mean the iframe stalled: show the logo.
+  var AVATAR_STALE_MS = 1500;
+  // No frame at all this long after mounting: log the fallback once.
+  var AVATAR_TIMEOUT_MS = 5000;
+  var lastAvatarFrameAt = 0;
 
-  function drawPlaceholder() {
-    if (!camOn) return;
-    frame++;
-    var ctx = camCanvas.getContext("2d");
-    var t = frame / 2;
-    var g = ctx.createLinearGradient(0, 0, 640, 480);
+  function paintBackground(ctx) {
+    var g = ctx.createLinearGradient(0, 0, CAM_W, CAM_H);
     g.addColorStop(0, "#0c2b26");
     g.addColorStop(1, "#1d5c4d");
     ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 640, 480);
+    ctx.fillRect(0, 0, CAM_W, CAM_H);
+  }
+
+  function drawAvatarFrame(bitmap) {
+    lastAvatarFrameAt = Date.now();
+    try {
+      if (camOn) {
+        var ctx = camCanvas.getContext("2d");
+        paintBackground(ctx);
+        // Contain-fit (the avatar page renders 4:3 too, so usually 1:1).
+        var s = Math.min(CAM_W / bitmap.width, CAM_H / bitmap.height);
+        var w = bitmap.width * s;
+        var h = bitmap.height * s;
+        ctx.drawImage(bitmap, (CAM_W - w) / 2, (CAM_H - h) / 2, w, h);
+      }
+    } catch (_) {}
+    try {
+      bitmap.close();
+    } catch (_) {}
+  }
+
+  function drawPlaceholder() {
+    if (!camOn) return;
+    if (Date.now() - lastAvatarFrameAt < AVATAR_STALE_MS) return;
+    frame++;
+    var ctx = camCanvas.getContext("2d");
+    var t = frame / 2;
+    paintBackground(ctx);
     var r = 90 + 8 * Math.sin(t * 1.4);
     ctx.beginPath();
     ctx.arc(320, 200, r, 0, Math.PI * 2);
@@ -162,6 +204,81 @@
       camTrack = camStream.getVideoTracks()[0];
     }
     return camTrack;
+  }
+
+  /* ---------- avatar iframe (renders Manglara, sends frames) ---------- */
+  var AVATAR_URL = CFG.avatarUrl || "";
+  var AVATAR_ORIGIN = CFG.avatarOrigin || "";
+  var avatarFrame = null;
+  var avatarReady = false;
+  var avatarMountedAt = 0;
+  var avatarTimeoutLogged = false;
+
+  function mountAvatar() {
+    if (!AVATAR_URL) return;
+    var root = document.documentElement;
+    if (!root) return;
+    if (avatarFrame && avatarFrame.isConnected) return;
+    var f = document.createElement("iframe");
+    f.src = AVATAR_URL;
+    f.setAttribute("allow", "autoplay");
+    f.setAttribute("aria-hidden", "true");
+    f.tabIndex = -1;
+    // Inside the viewport (Chrome throttles offscreen cross-origin iframes)
+    // but invisible and click-through.
+    f.style.cssText =
+      "position:fixed;left:0;bottom:0;width:" + CAM_W + "px;height:" + CAM_H +
+      "px;border:0;opacity:0.01;pointer-events:none;z-index:-2147483647;";
+    // Outside <body>: provider SPAs re-render body and would drop it.
+    root.appendChild(f);
+    avatarFrame = f;
+    avatarReady = false;
+    avatarMountedAt = Date.now();
+    log("avatar iframe mounted");
+  }
+
+  function postToAvatar(msg, transfer) {
+    if (!avatarFrame || !avatarReady || !AVATAR_ORIGIN) return;
+    try {
+      msg.__manglara = "bridge";
+      avatarFrame.contentWindow.postMessage(msg, AVATAR_ORIGIN, transfer || []);
+    } catch (_) {}
+  }
+
+  window.addEventListener("message", function (ev) {
+    if (!AVATAR_ORIGIN || ev.origin !== AVATAR_ORIGIN) return;
+    if (!avatarFrame || ev.source !== avatarFrame.contentWindow) return;
+    var d = ev.data;
+    if (!d || d.__manglara !== "avatar") return;
+    if (d.type === "frame" && d.bitmap) {
+      drawAvatarFrame(d.bitmap);
+    } else if (d.type === "ready") {
+      avatarReady = true;
+      postToAvatar({ type: "state", state: avatarState });
+      report({ type: "avatar_ready" });
+    }
+  });
+
+  var avatarState = "idle";
+  function setAvatarState(state) {
+    avatarState = state;
+    postToAvatar({ type: "state", state: state });
+  }
+
+  if (AVATAR_URL) {
+    setInterval(function () {
+      mountAvatar();
+      if (
+        !avatarTimeoutLogged &&
+        avatarMountedAt &&
+        !lastAvatarFrameAt &&
+        Date.now() - avatarMountedAt > AVATAR_TIMEOUT_MS
+      ) {
+        avatarTimeoutLogged = true;
+        report({ type: "avatar_timeout" });
+      }
+    }, 1000);
+    mountAvatar();
   }
 
   /* ---------- fake mic: bot audio in, gated ---------- */
@@ -194,13 +311,21 @@
       if (n <= 0) return;
       var buf = ctx.createBuffer(1, n, BOT_RATE);
       var ch = buf.getChannelData(0);
+      // Raw copy for the avatar (its playback clock drives the lip-sync);
+      // only while her voice is open, so a muted Manglara stays idle.
+      var raw = micOn && avatarReady ? new Uint8Array(n * 2) : null;
       for (var i = 0; i < n; i++) {
         var lo = bin.charCodeAt(i * 2);
         var hi = bin.charCodeAt(i * 2 + 1);
+        if (raw) {
+          raw[i * 2] = lo;
+          raw[i * 2 + 1] = hi;
+        }
         var v = (hi << 8) | lo;
         if (v >= 32768) v -= 65536;
         ch[i] = v / 32768;
       }
+      if (raw) postToAvatar({ type: "pcm", data: raw.buffer }, [raw.buffer]);
       var src = ctx.createBufferSource();
       src.buffer = buf;
       src.connect(micGate);
@@ -237,6 +362,8 @@
       var ctx = audioCtx();
       micGate.gain.setTargetAtTime(micOn ? 1 : 0, ctx.currentTime, 0.05);
     } catch (_) {}
+    // Muted: the mouth must not keep moving to audio nobody hears.
+    if (!micOn) postToAvatar({ type: "flush" });
   }
 
   function setCam(on) {
@@ -454,10 +581,18 @@
         break;
       case "flush":
         flushBotAudio();
+        postToAvatar({ type: "flush" });
         break;
       case "lip_text":
+        if (micOn && typeof msg.text === "string") {
+          postToAvatar({ type: "lip_text", text: msg.text });
+        }
+        break;
       case "turn_end":
-        // Consumed by the avatar camera (Fase 4).
+        postToAvatar({ type: "turn_end" });
+        break;
+      case "avatar_state":
+        if (typeof msg.state === "string") setAvatarState(msg.state);
         break;
       case "bye":
         wsDead = true;
@@ -470,9 +605,12 @@
     }
   }
 
+  // Debug surface (devtools with MEETING_HEADLESS=false): `control` takes the
+  // same messages the backend sends over the control WebSocket.
   window.__manglaraBridge = {
     setMic: setMic,
     setCam: setCam,
     playBotPcm: playBotPcm,
+    control: onControl,
   };
 })();

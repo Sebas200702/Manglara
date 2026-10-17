@@ -1,6 +1,7 @@
 import { createBrowserRouter } from "react-router-dom";
 import { CallScreen } from "./screens/call-screen";
 import { MeetingScreen } from "./screens/meeting-screen";
+import { MeetingAvatarPage } from "./screens/meeting-avatar";
 import { App } from "./App";
 
 export const router = createBrowserRouter([
@@ -16,5 +17,10 @@ export const router = createBrowserRouter([
         element: <MeetingScreen />,
       },
     ]
-  }
+  },
+  {
+    // Avatar-only page the meeting bot embeds as its camera (no app chrome).
+    path: "/meeting/avatar",
+    element: <MeetingAvatarPage />,
+  },
 ]);

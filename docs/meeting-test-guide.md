@@ -54,7 +54,7 @@ Repetir por proveedor (Teams, Zoom, Meet):
 
 ## Registro de resultados
 
-Anotar cada prueba real aquí (o en `docs/meeting-provider-recipes.md` cuando exista):
+Anotar cada prueba real aquí; los cambios de selectores van en `docs/meeting-provider-recipes.md`:
 
 | Fecha | Proveedor | Prueba | Resultado | Notas |
 |-------|-----------|--------|-----------|-------|

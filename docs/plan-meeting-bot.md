@@ -1,7 +1,7 @@
 # Plan de implementación — Live Meeting con Manglara
 
-> Estado: plan aprobado, pendiente de implementación.
-> Última actualización: 2026-10-16.
+> Estado: implementado (Fases 0–5); pendiente de validación con reuniones reales (`docs/meeting-test-guide.md`).
+> Última actualización: 2026-10-17.
 
 Manglara se une a reuniones externas de Microsoft Teams, Zoom y Google Meet, escucha a los participantes y habla con ellos (Gemini Live), con el avatar en video. Todo se configura desde la página web, sin importar el dispositivo del usuario.
 

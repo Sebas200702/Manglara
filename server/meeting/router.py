@@ -27,6 +27,24 @@ TASKS: dict[str, asyncio.Task] = {}
 # Suscriptores UI por sesión.
 SUBS: dict[str, set[WebSocket]] = {}
 
+# v1: una sola reunión activa a la vez (un Chromium + una sesión Gemini).
+BUSY_MESSAGE = (
+    "Manglara ya está en una reunión. Desconéctala antes de unirla a otra."
+)
+# Historial de reuniones terminadas que se conserva (para GET y recargas).
+MAX_FINISHED_SESSIONS = 20
+
+
+def _prune_finished():
+    finished = sorted(
+        (s for s in SESSIONS.values() if s.bridge in ("closed", "error")),
+        key=lambda s: s.created_at,
+    )
+    for s in finished[: max(0, len(finished) - MAX_FINISHED_SESSIONS)]:
+        SESSIONS.pop(s.id, None)
+        TASKS.pop(s.id, None)
+        SUBS.pop(s.id, None)
+
 
 class JoinRequest(BaseModel):
     input: str = Field(..., min_length=3, max_length=500)
@@ -80,12 +98,13 @@ async def push_transcript(session_id: str, role: str, text: str):
 @router.post("/join", status_code=202)
 async def join_meeting(req: JoinRequest):
     if _active_session():
-        raise HTTPException(409, "Manglara ya está en una reunión")
+        raise HTTPException(409, BUSY_MESSAGE)
     try:
         provider, url = detect_and_normalize(req.input)
     except UnsupportedMeetingUrl as e:
         raise HTTPException(422, str(e))
 
+    _prune_finished()
     session = MeetingSession(
         provider=provider, url=url, name=req.name or MEETING_BOT_NAME
     )
@@ -104,13 +123,22 @@ async def join_meeting(req: JoinRequest):
         on_event=on_event,
         on_transcript=on_transcript,
     )
+    # Registrado ya (run() también lo hace): los comandos que lleguen antes
+    # de que la task arranque no deben dar 404.
+    BRIDGES[session.id] = bridge
     TASKS[session.id] = asyncio.create_task(bridge.run())
     return {"id": session.id, **session.public_state()}
 
 
 @router.get("")
 async def list_meetings():
-    return [s.public_state() for s in SESSIONS.values()]
+    """Debug: la reunión activa (si hay) y el historial reciente."""
+    active = _active_session()
+    sessions = sorted(SESSIONS.values(), key=lambda s: s.created_at, reverse=True)
+    return {
+        "active": active.id if active else None,
+        "sessions": [s.public_state() for s in sessions],
+    }
 
 
 @router.get("/{session_id}")

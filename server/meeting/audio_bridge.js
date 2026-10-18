@@ -373,10 +373,11 @@
 
   function setCam(on) {
     camOn = !!on;
-    try {
-      var t = videoTrack();
-      if (t) t.enabled = camOn;
-    } catch (_) {}
+    for (var i = 0; i < handedVideo.length; i++) {
+      try {
+        handedVideo[i].enabled = camOn;
+      } catch (_) {}
+    }
   }
 
   /* ---------- getUserMedia / enumerateDevices overrides ---------- */
@@ -393,13 +394,33 @@
     label: "Manglara Camera",
   };
 
+  // Every getUserMedia gets fresh CLONES of the base tracks: providers call
+  // track.stop() when the user turns the camera/mic off, and a later
+  // getUserMedia must not receive that ended track (Teams then shows "El
+  // vídeo dejó de funcionar"). Clones share the source (canvas / mixer).
+  var handedVideo = [];
+  var handedAudio = [];
+  function pruneEnded(list) {
+    for (var i = list.length - 1; i >= 0; i--) {
+      if (list[i].readyState === "ended") list.splice(i, 1);
+    }
+  }
   function syntheticStream(needAudio, needVideo) {
     var tracks = [];
     if (needAudio) {
       ensureMic();
-      tracks.push(micTrack);
+      pruneEnded(handedAudio);
+      var a = micTrack.clone();
+      handedAudio.push(a);
+      tracks.push(a);
     }
-    if (needVideo) tracks.push(videoTrack());
+    if (needVideo) {
+      pruneEnded(handedVideo);
+      var v = videoTrack().clone();
+      v.enabled = camOn;
+      handedVideo.push(v);
+      tracks.push(v);
+    }
     return new MediaStream(tracks);
   }
 
@@ -489,7 +510,8 @@
 
   function teeTrack(track, source) {
     if (!track || track.kind !== "audio") return;
-    if (track === micTrack) return; // our own fake mic, never a participant
+    // Our own fake mic (or a clone of it) is never a participant.
+    if (track === micTrack || handedAudio.indexOf(track) >= 0) return;
     if (teedTracks[track.id]) return;
     teedTracks[track.id] = true;
     teeTrackList.push(track);

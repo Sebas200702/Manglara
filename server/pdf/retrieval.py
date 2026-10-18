@@ -1,28 +1,10 @@
 import asyncio
 import logging
 
-from fastembed import TextEmbedding
-
-from db import search_chunks, search_chunks_multi
+import db
+from knowledge.embedding import embed_texts
 
 logger = logging.getLogger(__name__)
-
-_embedder: TextEmbedding | None = None
-
-
-def get_embedder() -> TextEmbedding:
-    global _embedder
-    if _embedder is None:
-        _embedder = TextEmbedding(
-            model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-            max_length=512,
-        )
-    return _embedder
-
-
-def embed_query(query: str) -> list[float]:
-    emb = list(get_embedder().embed([f"query: {query}"]))
-    return emb[0].tolist()
 
 
 def assemble_context(chunks: list[dict], max_chars: int = 4000) -> str:
@@ -40,15 +22,16 @@ def assemble_context(chunks: list[dict], max_chars: int = 4000) -> str:
 
 
 async def retrieve_context(
-    document_ids: str | list[str], query: str, top_k: int = 5
+    document_ids: str | list[str], query: str, top_k: int = 8
 ) -> str:
-    # Embedding is CPU-bound (ONNX); run off the event loop so it never
-    # stalls the realtime audio stream while the user is speaking.
-    embedding = await asyncio.to_thread(embed_query, query)
+    # Ya no hay modelo ONNX local: el embedding es una llamada de red vía
+    # `embed_texts()`, y se espera directamente en el event loop (no bloquea
+    # el streaming de audio del WS porque se lanza con asyncio.create_task).
+    embedding = (await embed_texts([query], task_type="RETRIEVAL_QUERY"))[0]
     if isinstance(document_ids, str):
-        chunks = await search_chunks(document_ids, embedding, top_k=top_k)
+        chunks = await db.search_chunks(document_ids, embedding, top_k=top_k)
     else:
-        chunks = await search_chunks_multi(document_ids, embedding, top_k=top_k)
+        chunks = await db.search_chunks_multi(list(document_ids), embedding, top_k=top_k)
     if not chunks:
         return ""
     return assemble_context(chunks)

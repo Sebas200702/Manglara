@@ -47,6 +47,12 @@ export default defineConfig(({ mode }) => {
           target: wsTarget.replace(/\/+$/, ""),
           ws: true,
         },
+        // Panel de conocimiento: la API va por el mismo origen (proxy),
+        // así la cookie de sesión es first-party y no se necesita CORS.
+        "/api": {
+          target: wsTarget.replace(/^wss?:\/\//, "").replace(/:+$/, ""),
+          changeOrigin: true,
+        },
       },
     },
   };

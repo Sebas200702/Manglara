@@ -8,13 +8,13 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import CORS_ALLOW_ORIGINS, MEETING_WEB_URL, PORT
-from db import list_documents
+from db import list_active_documents
 from gemini_client import GeminiLiveClient
+from knowledge.router import auth_router, router as knowledge_router
 from meeting.router import router as meeting_router, ws_router as meeting_ws_router
-from pdf.digest import backfill_digests, build_knowledge_context
-from pdf.router import router as pdf_router, get_active_documents, set_active_documents
+from pdf.digest import build_knowledge_context
 from pdf.retrieval import retrieve_context
-from pdf.sources import ready_curriculum_document_ids
+from pdf.router import router as pdf_router
 from prompt import build_system_prompt
 
 logging.basicConfig(
@@ -29,23 +29,17 @@ logger = logging.getLogger("server")
 RAG_MIN_CHARS = 40  # partial transcript length that triggers retrieval at once
 RAG_DEBOUNCE_S = 0.3  # for shorter partials, wait for a pause in the stream
 
-async def activate_ready_documents():
-    # Active docs live in memory, so every restart must re-activate them;
-    # otherwise sessions run without any knowledge source.
-    try:
-        docs = await list_documents()
-        ready = ready_curriculum_document_ids(docs)
-        set_active_documents(ready)
-        logger.info("[startup] activated %d ready documents", len(ready))
-        if ready:
-            asyncio.create_task(backfill_digests(ready))
-    except Exception as e:
-        logger.error(f"[startup] document activation failed: {e}")
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await activate_ready_documents()
+    # La fuente de verdad del conocimiento es la BD (documents.active,
+    # “/{doc_id}” en el panel del gestor). Ya no hay lista en memoria que
+    # activar al arrancar: cada sesión de voz lee el estado fresco.
+    try:
+        docs = await list_active_documents()
+        logger.info("[startup] conocimiento activo: %d fuentes", len(docs))
+    except Exception as e:
+        logger.error(f"[startup] no se pudo leer el conocimiento activo: {e}")
     yield
 
 
@@ -62,6 +56,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
+app.include_router(knowledge_router)
 app.include_router(pdf_router)
 app.include_router(meeting_router)
 app.include_router(meeting_ws_router)
@@ -80,13 +76,16 @@ async def ws_voice(ws: WebSocket):
     gemini = GeminiLiveClient()
 
     try:
-        knowledge = await build_knowledge_context(get_active_documents())
+        active = await list_active_documents()
+        active_ids = [d["id"] for d in active]
+        knowledge = await build_knowledge_context(active_ids)
         if knowledge:
-            logger.info("[ws] preloading %d chars of knowledge", len(knowledge))
+            logger.info("[ws] preloading %d chars of knowledge (%d fuentes activas)",
+                        len(knowledge), len(active_ids))
         else:
             logger.warning(
                 "[ws] no knowledge to preload (%d active docs); relying on retrieval only",
-                len(get_active_documents()),
+                len(active_ids),
             )
     except Exception as e:
         logger.warning(f"[ws] knowledge preload failed: {e}")
@@ -114,10 +113,11 @@ async def ws_voice(ws: WebSocket):
     rag = {"fired": False, "debounce": None}
 
     async def run_retrieval(text: str):
-        doc_ids = get_active_documents()
-        if not doc_ids:
-            return
         try:
+            active = await list_active_documents()
+            doc_ids = [d["id"] for d in active]
+            if not doc_ids:
+                return
             context = await retrieve_context(doc_ids, text)
             if context:
                 await gemini.inject_context(

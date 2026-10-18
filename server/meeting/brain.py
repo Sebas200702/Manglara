@@ -18,10 +18,10 @@ import logging
 import time
 from typing import Awaitable, Callable
 
+from db import list_active_documents
 from gemini_client import GeminiLiveClient
 from pdf.digest import build_knowledge_context
 from pdf.retrieval import retrieve_context
-from pdf.router import get_active_documents
 from .prompt import build_meeting_prompt
 
 logger = logging.getLogger(__name__)
@@ -84,7 +84,8 @@ class MeetingBrain:
 
     async def _load_knowledge(self) -> str:
         try:
-            knowledge = await build_knowledge_context(get_active_documents())
+            docs = await list_active_documents()
+            knowledge = await build_knowledge_context([d["id"] for d in docs])
             logger.info("[brain] conocimiento precargado: %d chars", len(knowledge))
             return knowledge
         except Exception as e:
@@ -185,11 +186,14 @@ class MeetingBrain:
         await self._on_interrupted()
 
     async def _run_retrieval(self, text: str):
-        doc_ids = get_active_documents()
         gemini = self._gemini
-        if not doc_ids or not gemini or not text.strip():
+        if not gemini or not text.strip():
             return
         try:
+            docs = await list_active_documents()
+            doc_ids = [d["id"] for d in docs]
+            if not doc_ids:
+                return
             context = await retrieve_context(doc_ids, text)
             if context:
                 await gemini.inject_context(

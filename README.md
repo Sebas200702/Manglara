@@ -131,3 +131,21 @@ bun run --filter server start
 | `MEETING_ALONE_TIMEOUT_MIN` | Sale si se queda sola este tiempo; 0 = nunca (default: 10) |
 | `MEETING_WEB_URL` | URL pública de la web app, donde el bot abre el avatar (default: http://localhost:5173) |
 | `MEETING_AVATAR_URL` | Ruta (o URL absoluta) de la página del avatar (default: /meeting/avatar) |
+
+## Panel de conocimiento
+
+Gestión de cartillas sin tocar código: `/conocimiento` (clave única del
+gestor, cookie de sesión de 12 h). Ver `docs/conocimiento-runbook.md`
+para el flujo completo, el reciclaje de clave y la operativa de backup.
+
+Variables nuevas (todas opcionales excepto la clave del gestor):
+
+| Variable | Descripción |
+|----------|-------------|
+| `ADMIN_PASSWORD_HASH` | Clave del panel en `scrypt:N:r:p:salt:hash` (genera con `python scripts/hash_password.py`) |
+| `ADMIN_PASSWORD` | Alternativa en claro (no recomendado; se ignora si hay hash) |
+| `SESSION_SECRET` | Firma de la cookie; si falta, se deriva de la clave |
+| `SESSION_TTL_HOURS` | Horas de sesión (default: 12) |
+| `LOGIN_ATTEMPTS_PER_MINUTE` | Rate limit del login (default: 5) |
+| `GEMINI_EMBEDDING_MODEL` | Embeddings (default: gemini-embedding-2) |
+| `GEMINI_EMBEDDING_DIM` | Dimensión del vector (default: 384, coincide con `vector(384)`) |

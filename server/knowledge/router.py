@@ -10,7 +10,6 @@ Todo require cookie de sesión salvo login y /health.
 
 import json
 import logging
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,7 +21,7 @@ import config
 import db
 import knowledge.auth as auth
 from pdf.digest import MAX_KNOWLEDGE_CHARS
-from storage import StorageClient
+from storage import StorageClient, storage_key
 
 logger = logging.getLogger(__name__)
 
@@ -264,7 +263,7 @@ async def init_upload(body: UploadInitIn):
     if body.size > MAX_FILE_BYTES:
         raise HTTPException(400, "El archivo supera los 50MB")
     filename = _safe_filename(body.filename)
-    storage_path = f"{uuid.uuid4()}/{filename}"
+    storage_path = storage_key(filename)
 
     if body.mode == "replace":
         doc = await db.get_document(body.document_id or "")

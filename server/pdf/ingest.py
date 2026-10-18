@@ -1,7 +1,6 @@
 import os
 import logging
 import tempfile
-import uuid
 from pathlib import Path
 
 import fitz
@@ -10,7 +9,7 @@ from docx import Document as DocxDocument
 from db import insert_document, insert_chunks, update_document_digest
 from knowledge.embedding import EMBED_BATCH, embed_texts
 from pdf.digest import generate_digest
-from storage import StorageClient
+from storage import StorageClient, storage_key
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +185,7 @@ async def ingest_document(
         except Exception as e:
             logger.warning("[ingest] Gemini Files API upload failed (non-critical): %s", e)
 
-        storage_path = f"{uuid.uuid4()}/{filename}"
+        storage_path = storage_key(filename)
         await storage.upload(storage_path, file_data)
 
         doc = await insert_document(

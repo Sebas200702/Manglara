@@ -24,6 +24,8 @@ import {
 export const AVATAR_FRAME_WIDTH = 640;
 export const AVATAR_FRAME_HEIGHT = 480;
 const FRAME_FPS = 24;
+/** Same mangrove loop as the 1:1 call's backdrop. */
+const BACKGROUND_SRC = "/mangrove-loop.mp4";
 
 export function MeetingAvatarPage() {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -44,15 +46,29 @@ export function MeetingAvatarPage() {
     let lastFpsAt = performance.now();
     let fpsRaf = 0;
 
+    const background = document.createElement("video");
+    background.src = BACKGROUND_SRC;
+    background.muted = true;
+    background.loop = true;
+    background.playsInline = true;
+    background.preload = "auto";
+    void background.play().catch(() => {});
+
     const controller = new AvatarController(node, {
       onReady: () => {
         if (disposed) return;
         setStatus("");
         const canvas = node.querySelector("canvas");
         if (canvas) {
-          stopPump = startFramePump(canvas, FRAME_FPS, () => {
-            frames += 1;
-          });
+          stopPump = startFramePump(
+            canvas,
+            FRAME_FPS,
+            () => {
+              frames += 1;
+            },
+            background,
+            { width: AVATAR_FRAME_WIDTH, height: AVATAR_FRAME_HEIGHT }
+          );
         }
         announceReady();
       },
@@ -125,6 +141,8 @@ export function MeetingAvatarPage() {
       window.removeEventListener("message", onMessage);
       cancelAnimationFrame(fpsRaf);
       stopPump?.();
+      background.pause();
+      background.removeAttribute("src");
       controller.dispose();
     };
   }, [embedded]);

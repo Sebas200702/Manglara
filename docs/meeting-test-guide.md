@@ -58,7 +58,8 @@ Anotar cada prueba real aquí; los cambios de selectores van en `docs/meeting-pr
 
 | Fecha | Proveedor | Prueba | Resultado | Notas |
 |-------|-----------|--------|-----------|-------|
-|       |           |        |           |       |
+| 2026-10-17 | Teams | Hitos A, B y C | OK | Ver notas en `docs/meeting-provider-recipes.md`. |
+| 2026-10-17 | Meet | Join invitado | Bloqueado | Workspace no admite anónimos; usar perfil logueado. |
 
 ## Notas
 

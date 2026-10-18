@@ -2,7 +2,7 @@
 
 Las recetas (`server/meeting/recipes/`) automatizan la UI web de cada proveedor: entrar como invitado, detectar el estado (sala de espera, en reunión, salida) y pulsar los botones de micrófono, cámara y salir. **Los proveedores cambian su DOM a menudo**: este documento es el mapa para mantenerlas.
 
-> Estado: ninguna receta está verificada todavía contra una reunión real. Cada archivo lleva `last_verified`; actualízalo (y la tabla de abajo) al validar con `docs/meeting-test-guide.md`.
+> Estado: Teams verificado contra una reunión real el 2026-10-17 (ver registro abajo). Zoom y Meet sin verificar. Cada archivo lleva `last_verified`; actualízalo (y la tabla de abajo) al validar con `docs/meeting-test-guide.md`.
 
 ## Cómo funcionan
 
@@ -21,7 +21,15 @@ El audio y la cámara del bot **no** dependen de los selectores: el script inyec
 
 ## Teams (`recipes/teams.py`)
 
-Última verificación: sin verificar.
+Última verificación: 2026-10-17, Teams web en español, link `/meet/<id>?p=<código>`, invitado anónimo.
+
+Notas de la verificación real:
+
+- Los botones de Teams ignoran a veces el click sintético sobre el texto (cae en un `span` interno): el lanzador y "Unirse ahora" se pulsan por `data-tid` (`joinOnWeb`, `prejoin-join-button`) con `press_until_gone`, y mic/cámara con `set_toggle` (verifica la etiqueta y reintenta con click DOM).
+- Etiquetas reales: micro abierto "Desactivar audio del micrófono", silenciado "Reactivar audio del micrófono"; cámara encendida "Apagar la cámara"; salir `data-tid="hangup-main-btn"` ("Salir"); lobby "Alguien le permitirá entrar en breve"; expulsión "Se le ha quitado de la reunión".
+- Teams decodifica el audio y lo reproduce con su propio `AudioContext`: la pista del receptor WebRTC llega en silencio. El script inyectado engancha los nodos conectados a `AudioContext.destination`.
+- Al apagar la cámara Teams hace `track.stop()`: cada `getUserMedia` recibe clones nuevos de las pistas falsas.
+- Si la app de escritorio de Teams está instalada (solo con `MEETING_HEADLESS=false`) Chrome puede preguntar "¿Abrir Microsoft Teams?": ignorarlo, el bot sigue en el navegador.
 
 | Estado / acción | Textos (es / en) |
 |-----------------|------------------|
@@ -94,6 +102,6 @@ En DevTools también tienes el puente inyectado: `window.__manglaraBridge.contro
 
 | Fecha | Proveedor | Resultado | Notas |
 |-------|-----------|-----------|-------|
-| — | Teams | pendiente | |
+| 2026-10-17 | Teams | OK | Join invitado, lobby, admisión, escucha y responde (Gemini), silenciar, cámara off/on con avatar, apagar interacción, desconectar. |
 | — | Zoom | pendiente | |
-| — | Meet | pendiente | |
+| 2026-10-17 | Meet | bloqueado | Reunión de Workspace sin invitados anónimos: "No puedes unirte a esta videollamada". Requiere perfil logueado. |

@@ -70,12 +70,16 @@ export function announceReady(): void {
  * The WebGL canvas is read through `captureStream()` + a <video>, which works
  * regardless of `preserveDrawingBuffer` (TalkingHead does not set it, so a
  * direct `createImageBitmap(canvas)` could read a cleared buffer).
+ * With a `background` video (the mangrove loop) each frame is composited
+ * over it (cover-fit), so the meeting sees Manglara in her mangrove.
  * Returns a stop function.
  */
 export function startFramePump(
   canvas: HTMLCanvasElement,
   fps: number,
-  onFrame?: () => void
+  onFrame?: () => void,
+  background?: HTMLVideoElement | null,
+  size: { width: number; height: number } = { width: 640, height: 480 }
 ): () => void {
   const stream = canvas.captureStream(fps);
   const video = document.createElement("video");
@@ -84,6 +88,28 @@ export function startFramePump(
   video.srcObject = stream;
   void video.play().catch(() => {});
 
+  const composite = document.createElement("canvas");
+  composite.width = size.width;
+  composite.height = size.height;
+  const cctx = composite.getContext("2d");
+
+  /** Background (cover) + avatar (contain), or null to send the avatar alone. */
+  const compose = (): HTMLCanvasElement | null => {
+    if (!cctx || !background || background.readyState < 2 || !background.videoWidth) {
+      return null;
+    }
+    const { width: W, height: H } = composite;
+    const bs = Math.max(W / background.videoWidth, H / background.videoHeight);
+    const bw = background.videoWidth * bs;
+    const bh = background.videoHeight * bs;
+    cctx.drawImage(background, (W - bw) / 2, (H - bh) / 2, bw, bh);
+    const as = Math.min(W / video.videoWidth, H / video.videoHeight);
+    const aw = video.videoWidth * as;
+    const ah = video.videoHeight * as;
+    cctx.drawImage(video, (W - aw) / 2, (H - ah) / 2, aw, ah);
+    return composite;
+  };
+
   let stopped = false;
   let inFlight = false;
   const interval = 1000 / fps;
@@ -91,7 +117,7 @@ export function startFramePump(
   const tick = () => {
     if (stopped || inFlight || video.readyState < 2 || !video.videoWidth) return;
     inFlight = true;
-    createImageBitmap(video)
+    createImageBitmap(compose() ?? video)
       .then((bitmap) => {
         if (stopped) {
           bitmap.close();

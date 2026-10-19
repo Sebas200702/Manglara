@@ -36,13 +36,13 @@
 
 	# API REST del backend (panel de conocimiento, ingesta de fuentes).
 	handle /api/* {
-		reverse_proxy {$BACKEND_URL:https://manglara-server-terzeu-se4j0p-7c55e4-169-58-133-156.sslip.io}
+		reverse_proxy {$BACKEND_URL:https://api.manglara.app}
 	}
 
 	# WebSocket de voz, por si el front se deja de hablar con el backend
 	# absoluto y usa el mismo origen.
 	handle /ws {
-		reverse_proxy {$BACKEND_URL:https://manglara-server-terzeu-se4j0p-7c55e4-169-58-133-156.sslip.io}
+		reverse_proxy {$BACKEND_URL:https://api.manglara.app}
 	}
 
 	handle {

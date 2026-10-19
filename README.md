@@ -115,7 +115,16 @@ bun run build
 bun run --filter server start
 ```
 
-## Despliegue de la web (Dokploy / Railpack)
+## Despliegue (Dokploy / VPS)
+
+Hay **dos apps** en Dokploy, una por servicio, del mismo repo:
+
+| App | Build Path | Build Type | Puerto | Qué sirve |
+|---|---|---|---|---|
+| `frontend` | `/` (raíz) | `railpack` | 80 | La SPA (Vite) servida por Caddy |
+| `server` | `/server` | `dockerfile` | 8000 | El backend FastAPI (API REST + WS de voz) |
+
+### Frontend: por qué el build path es la raíz
 
 La web es un workspace de un monorepo (`packages/shared` + `web`) y la
 dependencia `@manglara/shared` **nunca se publica en npm**: solo existe en el
@@ -129,22 +138,60 @@ Configuración en Dokploy (Application → General → Build):
 |---|---|---|
 | Build Path | `/` (raíz del repo, **no** `/web`) | Railpack solo resuelve workspaces npm/bun si el `package.json` raíz está en el contexto del build. Con `/web` desaparece `packages/shared` |
 | Build Type | `railpack` | — |
-| Environment → `RAILPACK_SPA_OUTPUT_DIR` | `web/dist` | Fuerza el modo sitio estático (Caddy) y le dice a Railpack dónde queda el `dist`, que al compilar en la raíz queda en `web/dist` |
+| Env → `RAILPACK_SPA_OUTPUT_DIR` | `web/dist` | Fuerza el modo sitio estático (Caddy) y le dice a Railpack dónde queda el `dist`, que al compilar en la raíz queda en `web/dist` |
 
 En la raíz hay un `railpack.json` que fija `"provider": "node"`: sin él Railpack
 ve el `pyproject.toml` de la raíz (config de pyright) y despliega el backend
 Python en vez de la web.
 
-Variables de entorno que la app necesita (Vite las *inlinea en build time*, así
-que van en el build, no solo en runtime):
+El `Caddyfile` de la raíz sustituye al de Railpack: sirve `web/dist` y además
+proxea `/api/*` y `/ws` al backend, para que el panel de conocimiento hable con
+la API en el **mismo origen** y su cookie de sesión sea first-party (sin CORS
+con credenciales).
+
+### Frontend: variables de entorno
+
+Vite *inlinea* las `VITE_*` en build time, así que van en el build, no solo en
+runtime:
 
 | Variable | Para qué |
 |---|---|
 | `VITE_BACKEND_URL` | Origen del backend (`https://api.tu-dominio.co`). Si no está, el bundle apunta a `localhost:8000` |
-| `VITE_AVATAR_URL` | Opcional. Ruta del GLB del avatar. Por defecto `/custom_avatar.glb` |
+| `BACKEND_URL` | El mismo origen, para el proxy `/api` y `/ws` del Caddyfile |
 | `RAILPACK_SPA_OUTPUT_DIR` | `web/dist` (ver arriba) |
+| `VITE_AVATAR_URL` | Opcional. Ruta del GLB del avatar. Por defecto `/custom_avatar.glb` |
 
-El backend Python se despliega aparte (ver `render.yaml`, `rootDir: server`).
+### Server: imagen propia
+
+`server/Dockerfile` (python:3.13-slim + Chromium de Playwright) es la forma de
+desplegar el backend en Dokploy; `render.yaml` sigue siendo la vía para Render.
+Dos detalles que no son obvios:
+
+- **Usuario sin privilegios.** Chromium se niega a arrancar como root salvo con
+  `--no-sandbox`, y no se quiere bajar el aislamiento del navegador que entra a
+  reuniones ajenas. El Dockerfile crea `manglara` (uid 1000).
+- **`--proxy-headers` en uvicorn.** Traefik va delante; sin esto la app no ve la
+  IP real del cliente (afecta al límite de intentos de login del panel).
+
+Variables del server: `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`,
+`SUPABASE_DB_URL` (obligatorias), `ADMIN_PASSWORD_HASH` + `SESSION_SECRET` (panel
+de conocimiento; la clave se genera con `python scripts/hash_password.py`),
+`CORS_ALLOW_ORIGINS` / `KNOWLEDGE_ALLOWED_ORIGINS` / `MEETING_WEB_URL` con el
+origen de la web, y las `MEETING_*` del bot de reuniones.
+
+### Requisito del host: puertos 80 y 443
+
+Traefik (el proxy de Dokploy) publica 80 y 443. Si el firewall del VPS o el
+grupo de seguridad del proveedor los bloquea, las apps quedan desplegadas pero
+**no accesibles desde internet** (y Let's Encrypt no puede emitir el
+certificado). Comprobar y abrir:
+
+```bash
+sudo ufw allow 80/tcp && sudo ufw allow 443/tcp && sudo ufw reload
+# o, con firewalld:
+sudo firewall-cmd --permanent --add-service=http --add-service=https
+sudo firewall-cmd --reload
+```
 
 ## Variables de entorno
 

@@ -53,7 +53,7 @@ export function deriveStatus(
     case "lobby":
       return { label: "En sala de espera", tone: "waiting" };
     case "in_meeting":
-      if (brain === "active") return { label: "En reunión · escuchando y hablando", tone: "active" };
+      if (brain === "active") return { label: "En reunión · esperando su nombre", tone: "active" };
       if (brain === "starting") return { label: "En reunión · activando…", tone: "progress" };
       if (brain === "stopping") return { label: "En reunión · apagando…", tone: "progress" };
       return { label: "En reunión (dormida)", tone: "live" };

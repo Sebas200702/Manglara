@@ -15,6 +15,7 @@ from playwright.async_api import async_playwright
 
 from config import (
     MEETING_AVATAR_URL,
+    MEETING_CHROMIUM_EXECUTABLE,
     MEETING_CHROME_PROFILE_DIR,
     MEETING_HEADLESS,
     MEETING_WEB_URL,
@@ -163,6 +164,7 @@ class MeetingBrowser:
                     MEETING_CHROME_PROFILE_DIR,
                     headless=headless,
                     args=args,
+                    executable_path=MEETING_CHROMIUM_EXECUTABLE or None,
                     viewport={"width": 1280, "height": 720},
                     locale="es-ES",
                     # La CSP del proveedor bloquearía el WS interno a
@@ -172,7 +174,9 @@ class MeetingBrowser:
             )
         else:
             self._browser = await self._pw.chromium.launch(
-                headless=headless, args=args
+                headless=headless,
+                args=args,
+                executable_path=MEETING_CHROMIUM_EXECUTABLE or None,
             )
             self._context = await self._browser.new_context(
                 viewport={"width": 1280, "height": 720},

@@ -250,7 +250,7 @@ export function MeetingScreen() {
                 >
                   <p className="text-center text-xs font-medium text-neutral-500">
                     {brainOn
-                      ? "Manglara está escuchando a los participantes y responde en la reunión."
+                      ? "Di “Manglara” y luego tu pregunta. Volverá a esperar su nombre después de una pausa."
                       : "Manglara está en la reunión con su avatar, pero dormida: no escucha ni habla."}
                   </p>
 

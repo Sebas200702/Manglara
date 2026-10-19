@@ -14,15 +14,18 @@ cerebro encendido se reconecta sola (sin volver a presentarse).
 """
 
 import asyncio
+import json
 import logging
 import time
 from typing import Awaitable, Callable
 
 from db import list_active_documents
+from config import MEETING_BOT_NAME, MEETING_WAKE_MODEL_PATH
 from gemini_client import GeminiLiveClient
 from pdf.digest import build_knowledge_context
 from pdf.retrieval import retrieve_context
 from .prompt import build_meeting_prompt
+from .wake_gate import WakeGate, wake_variants
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,26 @@ MIC_REOPEN_GUARD_S = 0.5
 # rendirse y apagar el cerebro con error.
 MAX_FAST_FAILURES = 3
 RECONNECT_WINDOW_S = 30.0
+_wake_model = None
+
+
+def _new_wake_gate() -> WakeGate:
+    global _wake_model
+    from vosk import KaldiRecognizer, Model, SetLogLevel
+
+    SetLogLevel(-1)
+    if _wake_model is None:
+        _wake_model = Model(MEETING_WAKE_MODEL_PATH)
+    # Gramática cerrada: sin ella Vosk reparte el nombre entre todo su
+    # vocabulario ("mangle", "más clara"...) y casi nunca sale "manglar".
+    # Solo palabras del vocabulario del modelo; el resto Vosk lo descarta.
+    phrases = [
+        " ".join(words)
+        for words in wake_variants(MEETING_BOT_NAME)
+        if words and all(_wake_model.vosk_model_find_word(w) >= 0 for w in words)
+    ]
+    grammar = json.dumps(phrases + ["[unk]"])
+    return WakeGate(KaldiRecognizer(_wake_model, 16000, grammar), MEETING_BOT_NAME)
 
 
 class MeetingBrain:
@@ -57,6 +80,7 @@ class MeetingBrain:
         self._knowledge = ""
         # Instante (monotonic) en que termina de sonar el audio ya enviado.
         self._play_until = 0.0
+        self._wake_gate: WakeGate | None = None
 
     @property
     def active(self) -> bool:
@@ -65,6 +89,9 @@ class MeetingBrain:
     # -- ciclo de vida ---------------------------------------------------------
     async def start(self):
         self._stopping = False
+        # Cargar el modelo local antes de abrir Gemini: si falta, no se activa
+        # una sesión que pudiera recibir el audio sin filtro.
+        self._wake_gate = _new_wake_gate()
         self._knowledge = await self._load_knowledge()
         # Sin presentación automática: las personas tienen la primera palabra.
         await self._connect()
@@ -81,6 +108,7 @@ class MeetingBrain:
                 pass
         await self._close_gemini()
         self._play_until = 0.0
+        self._wake_gate = None
 
     async def _load_knowledge(self) -> str:
         try:
@@ -93,6 +121,8 @@ class MeetingBrain:
             return ""
 
     async def _connect(self):
+        if self._wake_gate:
+            self._wake_gate.reset()
         gemini = GeminiLiveClient()
         gemini.log_transcripts = False  # privacidad de los participantes
         gemini.transcript_callback = self._handle_transcript
@@ -164,10 +194,15 @@ class MeetingBrain:
 
     async def feed_remote_pcm(self, pcm: bytes):
         gemini = self._gemini
-        if not gemini or self._stopping or self._input_suppressed():
+        gate = self._wake_gate
+        if not gemini or not gate or self._stopping:
+            return
+        if self._input_suppressed():
+            gate.reset()
             return
         try:
-            await gemini.send_audio_pcm16_16k(pcm)
+            for chunk in gate.feed(pcm):
+                await gemini.send_audio_pcm16_16k(chunk)
         except Exception as e:
             logger.debug("[brain] audio a Gemini no enviado: %s", e)
 

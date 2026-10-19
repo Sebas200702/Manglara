@@ -9,6 +9,7 @@ import asyncio
 from meeting import brain as brain_mod
 from meeting.bridge import MeetingBridge
 from meeting.models import MeetingSession
+from meeting.wake_gate import WakeGate
 
 _passed = 0
 
@@ -62,6 +63,18 @@ class FakeGemini:
             yield item
 
 
+class FakeRecognizer:
+    def AcceptWaveform(self, pcm):
+        self.heard = b"WAKE" in pcm
+        return False
+
+    def PartialResult(self):
+        return '{"partial": "Manglara"}' if self.heard else '{"partial": "conversación"}'
+
+    def Reset(self):
+        self.heard = False
+
+
 class FakeRecipe:
     selectors: dict = {}
 
@@ -81,6 +94,7 @@ async def _no_knowledge(self):
 
 async def main():
     brain_mod.GeminiLiveClient = FakeGemini
+    brain_mod._new_wake_gate = lambda: WakeGate(FakeRecognizer(), "Manglara")
     brain_mod.MeetingBrain._load_knowledge = _no_knowledge
     brain_mod.RECONNECT_WINDOW_S = 0  # toda caída cuenta como "lenta" → reconecta
 
@@ -118,16 +132,20 @@ async def main():
     check(g.texts == [], "no habla primero (sin presentación automática)")
     check("MODO REUNIÓN" in (g.prompt or ""), "usa el prompt de reunión")
 
-    print("audio remoto -> Gemini")
+    print("audio remoto filtrado por nombre")
     await bridge._on_page_message({"type": "remote_pcm", "data": "AAAA"})
-    check(len(g.audio) == 1, "reenvía PCM remoto")
+    check(len(g.audio) == 0, "conversación sin nombre no llega a Gemini")
+    await bridge.brain.feed_remote_pcm(b"WAKE")
+    check(len(g.audio) == 1 and g.audio[0].endswith(b"WAKE"), "envía preaudio y nombre al activarse")
+    await bridge.brain.feed_remote_pcm(b"\x01\x00" * 1600)
+    check(len(g.audio) == 2, "continúa enviando la intervención")
 
     print("voz de Manglara + half-duplex")
     await g.out.put(b"\x00\x00" * 2400)  # 100 ms de audio a 24 kHz
     await asyncio.sleep(0.05)
     check(any(m["type"] == "bot_pcm" for m in sent), "bot_pcm hacia la página")
     await bridge._on_page_message({"type": "remote_pcm", "data": "AAAA"})
-    check(len(g.audio) == 1, "suprime entrada mientras habla")
+    check(len(g.audio) == 2, "suprime entrada mientras habla")
 
     print("transcripciones")
     await g.transcript_callback("model", "Hola")
@@ -140,7 +158,9 @@ async def main():
     await g.interrupt_callback()
     check(sent[-1] == {"type": "flush"}, "flush al interrumpir")
     await bridge._on_page_message({"type": "remote_pcm", "data": "AAAA"})
-    check(len(g.audio) == 2, "reabre entrada tras flush")
+    check(len(g.audio) == 2, "tras flush requiere el nombre de nuevo")
+    await bridge.brain.feed_remote_pcm(b"WAKE")
+    check(len(g.audio) > 2, "reabre al oír el nombre de nuevo")
 
     print("reconexión automática")
     await g.out.put(RuntimeError("session expired"))
@@ -149,6 +169,8 @@ async def main():
     g2 = FakeGemini.instances[-1]
     check(g2.texts == [], "no se vuelve a presentar")
     check(session.brain == "active", "sigue activa")
+    await bridge.brain.feed_remote_pcm(b"\x01\x00" * 1600)
+    check(g2.audio == [], "la reconexión exige el nombre de nuevo")
 
     print("brain_stop")
     await bridge.brain_stop()

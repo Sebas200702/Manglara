@@ -40,8 +40,8 @@
 	}
 
 	# WebSocket de voz, por si el front se deja de hablar con el backend
-	# absoluto y usa el mismo origen.
-	handle /ws {
+	# absoluto y usa el mismo origen. La ruta real es /ws/voice.
+	handle /ws/* {
 		reverse_proxy {$BACKEND_URL:https://api.manglara.app}
 	}
 

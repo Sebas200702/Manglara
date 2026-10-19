@@ -68,6 +68,12 @@ Manglara puede unirse a reuniones externas de Microsoft Teams, Zoom y Google Mee
   python -m playwright install chromium
   ```
 
+- Modelo local de voz en español, una vez por máquina (39 MB de descarga):
+
+  ```bash
+  cd server && python -m meeting.download_wake_model
+  ```
+
 - La web app corriendo (`bun run dev`): el bot carga de ahí la página del avatar (`/meeting/avatar`) que usa como cámara. Si no está disponible, la cámara muestra un logo animado.
 
 > En Render el build ya instala Chromium (`render.yaml`), pero el plan free
@@ -80,8 +86,10 @@ Manglara puede unirse a reuniones externas de Microsoft Teams, Zoom y Google Mee
 3. Crea una reunión de prueba vacía en Teams, Zoom o Meet y copia el link (ver `docs/meeting-test-guide.md`).
 4. Pega el link (o el ID de Zoom/Meet) → el badge detecta el proveedor → **Conectar**.
 5. Desde la reunión, como anfitrión, **admite a "Manglara"** desde la sala de espera. La web pasa a "En reunión (dormida)": se ve el avatar pero no escucha ni habla.
-6. Pulsa **▶ Iniciar Manglara Meeting Live**: se presenta y responde a los participantes.
+6. Pulsa **▶ Iniciar Manglara Meeting Live** y di «Manglara» seguido de tu pregunta. Solo esa intervención se envía a Gemini; una pausa vuelve a cerrar el paso del audio.
 7. Controles: **Silenciar** (corta su voz; sigue escuchando), **Cámara**, **Apagar interacción** (vuelve a dormida, reactivable) y **Desconectar** (sale y libera todo).
+
+La detección del nombre ocurre en el backend con Vosk. Hasta que se activa, el audio no sale hacia Gemini; el filtro conserva 1,5 segundos en memoria para incluir el inicio del llamado cuando detecta el nombre. El modelo español pequeño no incluye la palabra «Manglara» y puede transcribirla como «manglar»; esa variante también activa el filtro. Conviene probar el reconocimiento y los posibles falsos positivos con las voces y los micrófonos reales de la reunión.
 
 Para ver qué hace el bot, arranca el backend con `MEETING_HEADLESS=false`: se abre la ventana de Chromium.
 
@@ -145,9 +153,51 @@ ve el `pyproject.toml` de la raíz (config de pyright) y despliega el backend
 Python en vez de la web.
 
 El `Caddyfile` de la raíz sustituye al de Railpack: sirve `web/dist` y además
-proxea `/api/*` y `/ws` al backend, para que el panel de conocimiento hable con
+proxea `/api/*` y `/ws/*` al backend, para que el panel de conocimiento hable con
 la API en el **mismo origen** y su cookie de sesión sea first-party (sin CORS
 con credenciales).
+
+### Traefik: sin él no hay dominio que funcione
+
+Traefik es el proxy de Dokploy: es el único que **publica 80/443 en el host** y
+el que enruta cada dominio a su contenedor. Si el contenedor `dokploy-traefik`
+no existe, las apps se despliegan y arrancan igual, pero **no son accesibles
+desde internet** y no se emite ningún certificado.
+
+El instalador de Dokploy lo crea así (bloque literal de su `install.sh`):
+
+```bash
+docker run -d --name dokploy-traefik --restart always --network dokploy-network \
+  -v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
+  -v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -p 80:80/tcp -p 443:443/tcp -p 443:443/udp traefik:v3.6.25
+```
+
+Si Traefik falta, el instalador se queda a medias (el script aborta si 80, 443 o
+3000 ya están ocupados) y Dokploy arranca sin proxy. Cómo detectarlo:
+
+```bash
+# en el health check de Dokploy (Settings -> Traefik) o por consola:
+docker ps --filter name=dokploy-traefik
+curl -s http://localhost:3000/api/health   # -> "traefik": {"status":"healthy"}
+```
+
+Los routers de cada dominio los escribe Dokploy en
+`/etc/dokploy/traefik/dynamic/<appName>.yml`; si el contenedor no corre, esos
+archivos existen pero no sirven de nada.
+
+### Dominios
+
+| Dominio | App | Puerto |
+|---|---|---|
+| `manglara.app`, `www.manglara.app` | frontend | 80 |
+| `api.manglara.app` | server | 8000 |
+
+Los registros A apuntan a la IP del VPS y están **proxied** (nube naranja de
+Cloudflare). El certificado lo emite Let's Encrypt por HTTP-01: Cloudflare
+deja pasar el reto a Traefik por el puerto 80, así que no hace falta un token
+de API de Cloudflare ni cambiar el resolver a `dnsChallenge`.
 
 ### Frontend: variables de entorno
 
@@ -203,7 +253,9 @@ sudo firewall-cmd --reload
 | `PORT` | Puerto del backend (default: 8000) |
 | `CORS_ALLOW_ORIGINS` | Orígenes extra del frontend con permiso CORS, coma-separados (la web desplegada) |
 | `MEETING_BOT_NAME` | Nombre del bot en la reunión (default: Manglara) |
+| `MEETING_WAKE_MODEL_PATH` | Ruta del modelo Vosk local en español (default: `server/models/vosk-model-small-es-0.42`) |
 | `MEETING_HEADLESS` | `false` abre la ventana de Chromium para depurar (default: true) |
+| `MEETING_CHROMIUM_EXECUTABLE` | Ruta de un Chromium instalado localmente si se quiere usar en lugar del que instala Playwright |
 | `MEETING_CHROME_PROFILE_DIR` | Perfil persistente con sesión iniciada (vacío = invitado) |
 | `MEETING_MAX_DURATION_MIN` | Duración máxima de una reunión (default: 180) |
 | `MEETING_ALONE_TIMEOUT_MIN` | Sale si se queda sola este tiempo; 0 = nunca (default: 10) |

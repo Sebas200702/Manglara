@@ -14,7 +14,6 @@ cerebro encendido se reconecta sola (sin volver a presentarse).
 """
 
 import asyncio
-import json
 import logging
 import time
 from typing import Awaitable, Callable
@@ -25,7 +24,7 @@ from gemini_client import GeminiLiveClient
 from pdf.digest import build_knowledge_context
 from pdf.retrieval import retrieve_context
 from .prompt import build_meeting_prompt
-from .wake_gate import WakeGate, wake_variants
+from .wake_gate import WakeGate
 
 logger = logging.getLogger(__name__)
 
@@ -47,16 +46,7 @@ def _new_wake_gate() -> WakeGate:
     SetLogLevel(-1)
     if _wake_model is None:
         _wake_model = Model(MEETING_WAKE_MODEL_PATH)
-    # Gramática cerrada: sin ella Vosk reparte el nombre entre todo su
-    # vocabulario ("mangle", "más clara"...) y casi nunca sale "manglar".
-    # Solo palabras del vocabulario del modelo; el resto Vosk lo descarta.
-    phrases = [
-        " ".join(words)
-        for words in wake_variants(MEETING_BOT_NAME)
-        if words and all(_wake_model.vosk_model_find_word(w) >= 0 for w in words)
-    ]
-    grammar = json.dumps(phrases + ["[unk]"])
-    return WakeGate(KaldiRecognizer(_wake_model, 16000, grammar), MEETING_BOT_NAME)
+    return WakeGate(KaldiRecognizer(_wake_model, 16000), MEETING_BOT_NAME)
 
 
 class MeetingBrain:

@@ -115,6 +115,37 @@ bun run build
 bun run --filter server start
 ```
 
+## Despliegue de la web (Dokploy / Railpack)
+
+La web es un workspace de un monorepo (`packages/shared` + `web`) y la
+dependencia `@manglara/shared` **nunca se publica en npm**: solo existe en el
+repo. Por eso el build **no** puede correr en el subdirectorio `web/`; si lo
+hace, `npm install` busca `@manglara/shared` en el registro y falla con
+`404 Not Found - GET https://registry.npmjs.org/@manglara/shared`.
+
+Configuración en Dokploy (Application → General → Build):
+
+|Ajuste | Valor | Por qué |
+|---|---|---|
+| Build Path | `/` (raíz del repo, **no** `/web`) | Railpack solo resuelve workspaces npm/bun si el `package.json` raíz está en el contexto del build. Con `/web` desaparece `packages/shared` |
+| Build Type | `railpack` | — |
+| Environment → `RAILPACK_SPA_OUTPUT_DIR` | `web/dist` | Fuerza el modo sitio estático (Caddy) y le dice a Railpack dónde queda el `dist`, que al compilar en la raíz queda en `web/dist` |
+
+En la raíz hay un `railpack.json` que fija `"provider": "node"`: sin él Railpack
+ve el `pyproject.toml` de la raíz (config de pyright) y despliega el backend
+Python en vez de la web.
+
+Variables de entorno que la app necesita (Vite las *inlinea en build time*, así
+que van en el build, no solo en runtime):
+
+| Variable | Para qué |
+|---|---|
+| `VITE_BACKEND_URL` | Origen del backend (`https://api.tu-dominio.co`). Si no está, el bundle apunta a `localhost:8000` |
+| `VITE_AVATAR_URL` | Opcional. Ruta del GLB del avatar. Por defecto `/custom_avatar.glb` |
+| `RAILPACK_SPA_OUTPUT_DIR` | `web/dist` (ver arriba) |
+
+El backend Python se despliega aparte (ver `render.yaml`, `rootDir: server`).
+
 ## Variables de entorno
 
 | Variable | Descripción |

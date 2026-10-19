@@ -8,8 +8,9 @@
   "scripts": {
     "dev": "cd web && bun run dev",
     "build": "bun --filter @manglara/shared build && bun --filter web build",
-    "start": "bun run --cwd web preview -- --host 0.0.0.0 --port 3000"
+    "start": "bun run --cwd web preview -- --host 0.0.0.0 --port ${PORT:-3000}"
   },
+  "packageManager": "bun@1.4.3",
   "engines": {
     "node": ">=20.0.0"
   },

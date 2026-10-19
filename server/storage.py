@@ -1,7 +1,21 @@
 import httpx
 import logging
+import re
+import unicodedata
+import uuid
 
 logger = logging.getLogger(__name__)
+
+
+def storage_key(filename: str) -> str:
+    """ASCII-only object name for Supabase Storage, which rejects keys with
+    accents ('término', 'AÑO') with a 400. The original filename stays in the
+    documents row; this only names the stored blob."""
+    ascii_name = (
+        unicodedata.normalize("NFKD", filename).encode("ascii", "ignore").decode()
+    )
+    ascii_name = re.sub(r"[^A-Za-z0-9._-]+", "_", ascii_name).strip("_")
+    return f"{uuid.uuid4()}/{ascii_name or 'document'}"
 
 
 class StorageClient:

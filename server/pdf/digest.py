@@ -3,6 +3,7 @@ import logging
 from google import genai
 
 from config import GEMINI_API_KEY, GEMINI_DIGEST_MODEL
+from pdf.sources import CURRENT_SOURCES
 from db import get_document_chunks, list_documents, update_document_digest
 
 logger = logging.getLogger(__name__)
@@ -12,19 +13,42 @@ logger = logging.getLogger(__name__)
 MAX_SOURCE_CHARS = 250_000
 MAX_KNOWLEDGE_CHARS = 60_000
 
-DIGEST_INSTRUCTIONS = (
-    "A continuación está el texto completo del documento '{name}', parte de las "
-    "cartillas del currículo 'Habilidades Verdes para la Vida'.\n\n"
-    "Genera un digesto de conocimiento en español: un resumen denso y fiel que preserve:\n"
-    "- La estructura del documento (módulos, lecciones, secciones)\n"
-    "- Definiciones, conceptos clave y mensajes centrales\n"
-    "- Datos concretos: cifras, porcentajes, fechas y nombres propios\n"
-    "- Ejemplos y actividades representativos\n\n"
-    "No agregues información que no esté en el texto ni opiniones propias. "
-    "Empieza directamente con el contenido, sin preámbulos ni frases introductorias. "
-    "Escribe en prosa compacta con subtítulos. Longitud objetivo: 3000 a 8000 caracteres.\n\n"
-    "TEXTO DEL DOCUMENTO:\n{text}"
-)
+# Documents outside the curriculum (reports, needs assessments, market studies)
+# are complementary context, so their digests are kept short: several of them
+# must fit next to the cartillas in MAX_KNOWLEDGE_CHARS, and retrieval supplies
+# the detail when a question needs it.
+DIGEST_INSTRUCTIONS = {
+    "curriculum": (
+        "A continuación está el texto completo del documento '{name}', parte de las "
+        "cartillas del currículo 'Habilidades Verdes para la Vida'.\n\n"
+        "Genera un digesto de conocimiento en español: un resumen denso y fiel que preserve:\n"
+        "- La estructura del documento (módulos, lecciones, secciones)\n"
+        "- Definiciones, conceptos clave y mensajes centrales\n"
+        "- Datos concretos: cifras, porcentajes, fechas y nombres propios\n"
+        "- Ejemplos y actividades representativos\n\n"
+        "No agregues información que no esté en el texto ni opiniones propias. "
+        "Empieza directamente con el contenido, sin preámbulos ni frases introductorias. "
+        "Escribe en prosa compacta con subtítulos. Longitud objetivo: 3000 a 8000 caracteres.\n\n"
+        "TEXTO DEL DOCUMENTO:\n{text}"
+    ),
+    "institutional": (
+        "A continuación está el texto completo del documento '{name}', un documento "
+        "institucional (informe, diagnóstico, estudio o nota de actividad) del proyecto "
+        "Habilidades Verdes Ya / Green Skills Now de la Fundación Colombia Incluyente "
+        "y sus socios. Puede estar en otro idioma.\n\n"
+        "Genera en español un digesto breve y fiel que preserve:\n"
+        "- Qué es el documento: tipo, autoría o socio responsable, fecha y período que cubre\n"
+        "- Sus hallazgos, conclusiones o resultados principales\n"
+        "- Las cifras clave (metas, logros, porcentajes, número de participantes)\n"
+        "- Recomendaciones o próximos pasos, si los hay\n\n"
+        "No incluyas datos personales de participantes (nombres de personas que no sean "
+        "voceros institucionales, documentos de identidad, teléfonos, correos). "
+        "No agregues información que no esté en el texto ni opiniones propias. "
+        "Empieza directamente con el contenido, sin preámbulos. "
+        "Escribe en prosa compacta. Longitud objetivo: 1500 a 2500 caracteres.\n\n"
+        "TEXTO DEL DOCUMENTO:\n{text}"
+    ),
+}
 
 
 # The preferred model can hit 503 (high demand) at any time; digesting is an
@@ -33,7 +57,8 @@ _FALLBACK_MODELS = ["models/gemini-3.1-flash-lite", "models/gemini-2.5-flash"]
 
 
 async def generate_digest(genai_client, name: str, full_text: str) -> str | None:
-    prompt = DIGEST_INSTRUCTIONS.format(name=name, text=full_text[:MAX_SOURCE_CHARS])
+    kind = "curriculum" if name in CURRENT_SOURCES else "institutional"
+    prompt = DIGEST_INSTRUCTIONS[kind].format(name=name, text=full_text[:MAX_SOURCE_CHARS])
     models = [GEMINI_DIGEST_MODEL] + [
         m for m in _FALLBACK_MODELS if m != GEMINI_DIGEST_MODEL
     ]

@@ -200,6 +200,7 @@ class MeetingBrain:
         buffered = gate.wake()
         if not buffered:
             return
+        logger.info("[brain] nombre oido: se envian %d bytes de preaudio", len(buffered))
         try:
             await gemini.send_audio_pcm16_16k(buffered)
         except Exception as e:

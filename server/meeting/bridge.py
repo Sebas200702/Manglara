@@ -434,7 +434,16 @@ class MeetingBridge:
                     logger.warning("[meeting] on_remote_pcm falló: %s", e)
         elif mtype == "wake":
             if self.brain:
+                logger.info("[meeting] nombre detectado: se abre el paso")
                 await self.brain.wake()
+            else:
+                logger.info("[meeting] nombre detectado, pero el cerebro no esta activo")
+        elif mtype == "wake_state":
+            state = msg.get("state")
+            if state == "listening":
+                logger.info("[meeting] el navegador escucha el nombre")
+            else:
+                logger.info("[meeting] el navegador dejo de escuchar el nombre")
         elif mtype == "wake_error":
             logger.warning("[meeting] reconocimiento del nombre: %s", msg.get("error"))
         elif mtype == "meeting_state":

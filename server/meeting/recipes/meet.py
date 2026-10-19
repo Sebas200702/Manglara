@@ -15,6 +15,7 @@ from .base import (
     click_mic_button,
     set_toggle,
     fill_first,
+    perform_leave,
 )
 
 logger = logging.getLogger(__name__)
@@ -102,13 +103,21 @@ class MeetRecipe(JoinRecipe):
             raise RuntimeError("no se encontró el botón de unirse")
 
     async def leave(self, page):
-        await click_first(
+        await perform_leave(
             page,
-            [
+            candidates=[
+                {"selector": 'button[jsname="CQylAd"]'},
+                {"selector": 'button[aria-label*="Salir"]'},
+                {"selector": 'button[aria-label*="Leave"]'},
+                {"selector": 'button[data-tooltip*="Salir"]'},
+                {"selector": 'button[data-tooltip*="Leave"]'},
                 {"text": "Salir de la llamada"},
                 {"text": "Leave call"},
+                {"text": "Abandonar la llamada"},
+                {"text": "Volver a la pantalla de inicio"},
+                {"text": "Return to home screen"},
             ],
-            timeout_ms=8000,
+            selectors=self.selectors,
         )
 
     async def set_mic(self, page, enabled: bool):

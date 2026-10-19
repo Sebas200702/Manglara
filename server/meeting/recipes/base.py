@@ -258,3 +258,85 @@ async def _any_visible(page, candidates: list) -> bool:
         return await loc.is_visible()
     except Exception:
         return False
+
+
+async def perform_leave(
+    page,
+    candidates: list,
+    confirmation_candidates: list | None = None,
+    selectors: dict | None = None,
+) -> bool:
+    """Abandona la reunión de forma controlada y espera a que el proveedor confirme la salida.
+
+    1. Despierta la barra de controles inferior moviendo el mouse hacia la zona inferior.
+    2. Pulsa el botón de colgar / salir (Playwright locator o fallback DOM click).
+    3. Si aparece un diálogo de confirmación (p. ej. Zoom), pulsa confirmar.
+    4. Espera a que el proveedor confirme el estado 'left' (o da tiempo para enviar la señal).
+    """
+    # 1. Despertar la barra de herramientas si estuviese oculta por inactividad
+    try:
+        if hasattr(page, "mouse") and hasattr(page.mouse, "move"):
+            viewport = getattr(page, "viewport_size", None) or {"width": 1280, "height": 720}
+            await page.mouse.move(viewport["width"] // 2, viewport["height"] - 60)
+            if hasattr(page, "wait_for_timeout"):
+                await page.wait_for_timeout(300)
+    except Exception:
+        pass
+
+    # 2. Intentar pulsar el botón de salir con click_first
+    clicked = await click_first(page, candidates, timeout_ms=5000)
+    if not clicked and hasattr(page, "evaluate"):
+        # Fallback a click DOM directo en cualquier botón que coincida
+        try:
+            clicked = await page.evaluate(
+                """(keywords) => {
+                  const norm = (x) => (x || '').trim().toLowerCase();
+                  const buttons = [...document.querySelectorAll('button, [role=button], a')];
+                  for (const b of buttons) {
+                    const txt = norm(b.innerText);
+                    const aria = norm(b.getAttribute('aria-label'));
+                    const tip = norm(b.getAttribute('data-tooltip'));
+                    const tid = norm(b.getAttribute('data-tid'));
+                    const jsname = b.getAttribute('jsname');
+                    if (jsname === 'CQylAd' || tid === 'hangup-main-btn' || tid === 'hangup-button') {
+                      b.click();
+                      return true;
+                    }
+                    if (keywords.some((k) => txt.includes(k) || aria.includes(k) || tip.includes(k))) {
+                      b.click();
+                      return true;
+                    }
+                  }
+                  return false;
+                }""",
+                # Evita "end": puede seleccionar "Finalizar reunión para todos".
+                ["salir", "leave", "abandonar", "hangup", "colgar"],
+            )
+            if clicked:
+                logger.info("[recipe] click DOM de salida exitoso")
+        except Exception:
+            pass
+
+    # 3. Confirmación si existe (Zoom, o Meet modal)
+    if confirmation_candidates:
+        if hasattr(page, "wait_for_timeout"):
+            await page.wait_for_timeout(500)
+        await click_first(page, confirmation_candidates, timeout_ms=3000)
+
+    # 4. Esperar a que la página confirme el estado 'left'
+    if selectors and "left" in selectors and hasattr(page, "evaluate"):
+        for _ in range(8):
+            if hasattr(page, "wait_for_timeout"):
+                await page.wait_for_timeout(500)
+            try:
+                state = await poll_with_selectors(page, selectors)
+                if state == "left":
+                    logger.info("[recipe] confirmado abandono de reunión (estado left)")
+                    return True
+            except Exception:
+                pass
+    elif hasattr(page, "wait_for_timeout"):
+        await page.wait_for_timeout(1000)
+
+    return clicked
+

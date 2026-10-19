@@ -15,6 +15,7 @@ from .base import (
     click_mic_button,
     set_toggle,
     fill_first,
+    perform_leave,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,23 +101,23 @@ class ZoomRecipe(JoinRecipe):
             raise RuntimeError("no se encontró el botón Join")
 
     async def leave(self, page):
-        await click_first(
+        await perform_leave(
             page,
-            [
+            candidates=[
+                {"selector": '[aria-label*="Leave"]'},
+                {"selector": '[aria-label*="Salir"]'},
+                {"selector": '[data-testid*="leave"]'},
+                {"text": "Leave Meeting"},
+                {"text": "Salir de la reunión"},
                 {"text": "Leave", "exact": True},
                 {"text": "Salir", "exact": True},
-                {"text": "End", "exact": True},
             ],
-            timeout_ms=8000,
-        )
-        # Confirmación "Leave Meeting" si aparece.
-        await click_first(
-            page,
-            [
+            confirmation_candidates=[
                 {"text": "Leave Meeting"},
                 {"text": "Abandonar la reunión"},
+                {"text": "Salir de la reunión"},
             ],
-            timeout_ms=5000,
+            selectors=self.selectors,
         )
 
     async def set_mic(self, page, enabled: bool):

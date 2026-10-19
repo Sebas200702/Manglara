@@ -14,6 +14,7 @@ from .base import (
     set_toggle,
     fill_first,
     press_until_gone,
+    perform_leave,
 )
 
 logger = logging.getLogger(__name__)
@@ -108,16 +109,19 @@ class TeamsRecipe(JoinRecipe):
             raise RuntimeError("no se encontró el botón Unirse ahora")
 
     async def leave(self, page):
-        await click_first(
+        await perform_leave(
             page,
-            [
+            candidates=[
                 {"selector": '[data-tid="hangup-main-btn"]'},
                 {"selector": '#hangup-button'},
+                {"selector": '[aria-label*="Leave"]'},
+                {"selector": '[aria-label*="Salir"]'},
+                {"selector": '[data-tid*="hangup"]'},
                 {"text": "Salir", "exact": True},
                 {"text": "Abandonar", "exact": True},
                 {"text": "Leave", "exact": True},
             ],
-            timeout_ms=8000,
+            selectors=self.selectors,
         )
 
     async def set_mic(self, page, enabled: bool):

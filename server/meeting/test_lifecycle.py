@@ -26,7 +26,7 @@ class FakePage:
     def __init__(self):
         self.alive = True
 
-    async def goto(self, url, timeout=0):
+    async def goto(self, url, timeout=0, wait_until=None):
         pass
 
     async def evaluate(self, expr):

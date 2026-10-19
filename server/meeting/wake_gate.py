@@ -1,45 +1,30 @@
-"""Filtro local de audio para activar Gemini al oír el nombre del bot."""
+"""Filtro de audio para activar Gemini al oír el nombre del bot.
+
+El reconocimiento del nombre ocurre en el navegador del bot (Web Speech API,
+ver audio_bridge.js), que avisa con `wake()`. Aquí solo se guarda un poco de
+audio previo y se decide qué bloques pasan a Gemini.
+"""
 
 from collections import deque
-import json
 import re
 import unicodedata
 
 
 SAMPLE_RATE = 16000
 BYTES_PER_SECOND = SAMPLE_RATE * 2
-PREROLL_SECONDS = 1.5
+# El aviso del navegador llega con retraso (reconocimiento en la nube): el
+# preaudio debe cubrir el nombre y el inicio de la pregunta.
+PREROLL_SECONDS = 3.0
 SILENCE_SECONDS = 1.2
 MAX_UTTERANCE_SECONDS = 30
 SPEECH_RMS_THRESHOLD = 350
 
 
-def _words(text: str) -> list[str]:
-    plain = unicodedata.normalize("NFKD", text.casefold())
+def wake_words(name: str) -> list[str]:
+    """Nombre normalizado (minúsculas, sin tildes) que busca el navegador."""
+    plain = unicodedata.normalize("NFKD", name.casefold())
     plain = "".join(c for c in plain if not unicodedata.combining(c))
-    return re.findall(r"[a-z0-9]+", plain)
-
-
-def wake_variants(name: str) -> list[list[str]]:
-    """Formas del nombre que cuentan como activación (listas de palabras)."""
-    variants = [_words(name)]
-    if _words(name) == ["manglara"]:
-        # El modelo español Vosk 0.42 no tiene "manglara" en su vocabulario;
-        # suele transcribir el nombre como la palabra disponible "manglar".
-        variants.append(["manglar"])
-    return variants
-
-
-def _has_name(text: str, name: str) -> bool:
-    words = _words(text)
-    variants = wake_variants(name)
-    return any(
-        needle and any(
-            words[i : i + len(needle)] == needle
-            for i in range(len(words) - len(needle) + 1)
-        )
-        for needle in variants
-    )
+    return [" ".join(re.findall(r"[a-z0-9]+", plain))]
 
 
 def _is_speech(pcm: bytes) -> bool:
@@ -53,14 +38,16 @@ def _is_speech(pcm: bytes) -> bool:
 
 
 class WakeGate:
-    def __init__(self, recognizer, name: str):
-        self.recognizer = recognizer
-        self.name = name
+    def __init__(self):
         self._preroll: deque[bytes] = deque()
         self._preroll_bytes = 0
         self._open = False
         self._open_bytes = 0
         self._silence_bytes = 0
+
+    @property
+    def is_open(self) -> bool:
+        return self._open
 
     def reset(self):
         self._preroll.clear()
@@ -68,15 +55,23 @@ class WakeGate:
         self._open = False
         self._open_bytes = 0
         self._silence_bytes = 0
-        self.recognizer.Reset()
 
-    def feed(self, pcm: bytes) -> list[bytes]:
-        """Devuelve únicamente los bloques que pueden ir a Gemini."""
+    def wake(self) -> bytes:
+        """Abre el paso. Devuelve el preaudio que aún no llegó a Gemini."""
+        self._silence_bytes = 0
+        if self._open:
+            return b""
+        self._open = True
+        self._open_bytes = self._preroll_bytes
+        buffered = b"".join(self._preroll)
+        self._preroll.clear()
+        self._preroll_bytes = 0
+        return buffered
+
+    def feed(self, pcm: bytes) -> tuple[list[bytes], bool]:
+        """Devuelve (bloques para Gemini, si el paso se acaba de cerrar)."""
         if not pcm:
-            return []
-        complete = self.recognizer.AcceptWaveform(pcm)
-        result = self.recognizer.Result() if complete else self.recognizer.PartialResult()
-        heard = json.loads(result).get("text" if complete else "partial", "")
+            return [], False
 
         if self._open:
             self._open_bytes += len(pcm)
@@ -84,18 +79,11 @@ class WakeGate:
             if (self._silence_bytes >= SILENCE_SECONDS * BYTES_PER_SECOND
                     or self._open_bytes >= MAX_UTTERANCE_SECONDS * BYTES_PER_SECOND):
                 self.reset()
-            return [pcm]
+                return [pcm], True
+            return [pcm], False
 
         self._preroll.append(pcm)
         self._preroll_bytes += len(pcm)
         while self._preroll_bytes > PREROLL_SECONDS * BYTES_PER_SECOND:
             self._preroll_bytes -= len(self._preroll.popleft())
-        if _has_name(heard, self.name):
-            self._open = True
-            self._open_bytes = self._preroll_bytes
-            self._silence_bytes = 0
-            buffered = b"".join(self._preroll)
-            self._preroll.clear()
-            self._preroll_bytes = 0
-            return [buffered]
-        return []
+        return [], False

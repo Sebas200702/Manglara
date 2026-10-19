@@ -11,4 +11,3 @@ python-docx>=1.1.2
 # Live Meeting con Manglara: bot que se une a reuniones externas
 # (Teams/Zoom/Meet) con Chromium headless.
 playwright>=1.51.0
-vosk>=0.3.45

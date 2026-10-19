@@ -6,7 +6,7 @@ services:
     plan: free
     rootDir: server
     # Chromium (~400 MB) no cabe en el plan free: usar starter o self-host.
-    buildCommand: pip install -r requirements.txt && python -m meeting.download_wake_model && python -m playwright install --with-deps chromium
+    buildCommand: pip install -r requirements.txt && python -m playwright install --with-deps chromium
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:

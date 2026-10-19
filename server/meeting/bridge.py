@@ -312,6 +312,7 @@ class MeetingBridge:
             s.brain = "active"
             logger.info("[meeting] %s brain=active", s.id[:8])
         await self._send_control({"type": "avatar_state", "state": "listening"})
+        await self._send_control({"type": "wake_listen", "enabled": True})
         await self._emit()
 
     async def brain_stop(self, emit: bool = True):
@@ -328,6 +329,7 @@ class MeetingBridge:
                 await brain.stop()
             s.brain = "off"
             logger.info("[meeting] %s brain=off", s.id[:8])
+        await self._send_control({"type": "wake_listen", "enabled": False})
         await self._send_control({"type": "flush"})
         await self._send_control({"type": "avatar_state", "state": "idle"})
         if self._closing or not self.browser.page:
@@ -430,6 +432,11 @@ class MeetingBridge:
                     await self.on_remote_pcm(pcm)
                 except Exception as e:
                     logger.warning("[meeting] on_remote_pcm falló: %s", e)
+        elif mtype == "wake":
+            if self.brain:
+                await self.brain.wake()
+        elif mtype == "wake_error":
+            logger.warning("[meeting] reconocimiento del nombre: %s", msg.get("error"))
         elif mtype == "meeting_state":
             state = msg.get("state")
             s = self.session
@@ -449,6 +456,9 @@ class MeetingBridge:
                     "type": "avatar_state",
                     "state": "listening" if self.brain else "idle",
                 }
+            )
+            await self._send_control(
+                {"type": "wake_listen", "enabled": self.brain is not None}
             )
         elif mtype == "avatar_ready":
             logger.info("[meeting] avatar listo en la cámara")

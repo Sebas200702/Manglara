@@ -69,6 +69,12 @@ class GeminiLiveClient:
             audio=types.Blob(data=pcm, mime_type="audio/pcm;rate=16000")
         )
 
+    async def end_audio_stream(self):
+        """Fin del audio de entrada: el VAD cierra el turno sin esperar más."""
+        if not self.session:
+            return
+        await self.session.send_realtime_input(audio_stream_end=True)
+
     async def send_image_jpeg(self, image_data: bytes):
         if not self.session:
             return

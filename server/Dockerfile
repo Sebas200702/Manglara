@@ -19,10 +19,6 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
 
-# Reconocimiento local del nombre antes de pasar audio a Gemini.
-COPY meeting/download_wake_model.py meeting/download_wake_model.py
-RUN python meeting/download_wake_model.py
-
 # Chromium + librerias de sistema (el bot de reuniones necesita el navegador).
 RUN python -m playwright install --with-deps chromium
 

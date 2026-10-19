@@ -543,6 +543,10 @@
               report({ type: "remote_pcm", data: b64encode(ev.data) });
             };
             teeMixer.connect(node);
+            var wakeDest = ctx.createMediaStreamDestination();
+            teeMixer.connect(wakeDest);
+            wakeTrack = wakeDest.stream.getAudioTracks()[0];
+            startWake();
           }
           var src = ctx.createMediaStreamSource(new MediaStream([track]));
           src.connect(teeMixer);
@@ -553,6 +557,97 @@
       );
     } catch (err) {
       log("tee failed: " + err);
+    }
+  }
+
+  /* ---------- wake word: Web Speech API over the participants' mix ---------- */
+  // Recognition runs here (Chromium's cloud speech service) instead of on the
+  // backend: the server only gets a {type:"wake"} when the name is heard.
+  var WAKE_WORDS = CFG.wakeWords || [];
+  var wakeOn = false;
+  var wakeRec = null;
+  var wakeTrack = null;
+  var wakeFails = 0;
+
+  function wakeNorm(text) {
+    var plain = String(text || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+    return " " + plain + " ";
+  }
+
+  function wakeHit(text) {
+    var n = wakeNorm(text);
+    for (var i = 0; i < WAKE_WORDS.length; i++) {
+      if (WAKE_WORDS[i] && n.indexOf(" " + WAKE_WORDS[i] + " ") >= 0) return true;
+    }
+    return false;
+  }
+
+  function retryWake() {
+    // Chrome ends continuous sessions on its own; errors back off up to 30 s.
+    setTimeout(startWake, Math.min(30000, 250 * Math.pow(2, wakeFails)));
+  }
+
+  function startWake() {
+    if (!wakeOn || wakeRec || !wakeTrack || !WAKE_WORDS.length) return;
+    var C = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!C) {
+      report({ type: "wake_error", error: "SpeechRecognition no disponible" });
+      return;
+    }
+    var r = new C();
+    r.lang = "es-ES";
+    r.continuous = true;
+    r.interimResults = true;
+    r.maxAlternatives = 3;
+    var fired = {};
+    r.onresult = function (ev) {
+      for (var i = ev.resultIndex; i < ev.results.length; i++) {
+        if (fired[i]) continue;
+        var res = ev.results[i];
+        for (var a = 0; a < res.length; a++) {
+          if (wakeHit(res[a].transcript)) {
+            fired[i] = true;
+            wakeFails = 0;
+            report({ type: "wake" });
+            break;
+          }
+        }
+      }
+    };
+    r.onerror = function (ev) {
+      if (ev.error === "no-speech" || ev.error === "aborted") return;
+      wakeFails++;
+      report({ type: "wake_error", error: ev.error });
+    };
+    r.onend = function () {
+      if (wakeRec === r) wakeRec = null;
+      if (wakeOn) retryWake();
+    };
+    try {
+      r.start(wakeTrack);
+      wakeRec = r;
+    } catch (err) {
+      wakeFails++;
+      report({ type: "wake_error", error: String(err) });
+      retryWake();
+    }
+  }
+
+  function setWakeListen(on) {
+    wakeOn = !!on;
+    if (wakeOn) {
+      startWake();
+    } else if (wakeRec) {
+      var r = wakeRec;
+      wakeRec = null;
+      try {
+        r.abort();
+      } catch (_) {}
     }
   }
 
@@ -738,6 +833,9 @@
         break;
       case "turn_end":
         postToAvatar({ type: "turn_end" });
+        break;
+      case "wake_listen":
+        setWakeListen(msg.enabled);
         break;
       case "avatar_state":
         if (typeof msg.state === "string") setAvatarState(msg.state);

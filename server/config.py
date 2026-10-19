@@ -42,10 +42,6 @@ SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "documents")
 # Live Meeting con Manglara: bot que se une a reuniones externas
 # (Teams/Zoom/Meet). Todo opcional, con defaults sanos.
 MEETING_BOT_NAME = os.getenv("MEETING_BOT_NAME", "Manglara")
-MEETING_WAKE_MODEL_PATH = os.getenv(
-    "MEETING_WAKE_MODEL_PATH",
-    os.path.join(os.path.dirname(__file__), "models", "vosk-model-small-es-0.42"),
-)
 MEETING_HEADLESS = os.getenv("MEETING_HEADLESS", "true").lower() in (
     "1",
     "true",

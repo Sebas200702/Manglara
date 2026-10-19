@@ -68,12 +68,6 @@ Manglara puede unirse a reuniones externas de Microsoft Teams, Zoom y Google Mee
   python -m playwright install chromium
   ```
 
-- Modelo local de voz en español, una vez por máquina (39 MB de descarga):
-
-  ```bash
-  cd server && python -m meeting.download_wake_model
-  ```
-
 - La web app corriendo (`bun run dev`): el bot carga de ahí la página del avatar (`/meeting/avatar`) que usa como cámara. Si no está disponible, la cámara muestra un logo animado.
 
 > En Render el build ya instala Chromium (`render.yaml`), pero el plan free
@@ -89,7 +83,7 @@ Manglara puede unirse a reuniones externas de Microsoft Teams, Zoom y Google Mee
 6. Pulsa **▶ Iniciar Manglara Meeting Live** y di «Manglara» seguido de tu pregunta. Solo esa intervención se envía a Gemini; una pausa vuelve a cerrar el paso del audio.
 7. Controles: **Silenciar** (corta su voz; sigue escuchando), **Cámara**, **Apagar interacción** (vuelve a dormida, reactivable) y **Desconectar** (sale y libera todo).
 
-La detección del nombre ocurre en el backend con Vosk. Hasta que se activa, el audio no sale hacia Gemini; el filtro conserva 1,5 segundos en memoria para incluir el inicio del llamado cuando detecta el nombre. El modelo español pequeño no incluye la palabra «Manglara» y puede transcribirla como «manglar»; esa variante también activa el filtro. Conviene probar el reconocimiento y los posibles falsos positivos con las voces y los micrófonos reales de la reunión.
+La detección del nombre ocurre en el Chromium del bot con la Web Speech API (`SpeechRecognition`), que escucha la mezcla de audio de los participantes mientras la interacción está activa. Ese servicio de reconocimiento es de Google y funciona en la nube: el audio de la reunión sale hacia él aunque nadie diga el nombre. Hasta que reconoce «Manglara», el audio no se envía a Gemini; el backend conserva 3 segundos en memoria para incluir el inicio del llamado. Tras una pausa de 1,2 segundos el paso se cierra y se avisa a Gemini del fin del audio para que responda sin esperar.
 
 Para ver qué hace el bot, arranca el backend con `MEETING_HEADLESS=false`: se abre la ventana de Chromium.
 
@@ -253,7 +247,6 @@ sudo firewall-cmd --reload
 | `PORT` | Puerto del backend (default: 8000) |
 | `CORS_ALLOW_ORIGINS` | Orígenes extra del frontend con permiso CORS, coma-separados (la web desplegada) |
 | `MEETING_BOT_NAME` | Nombre del bot en la reunión (default: Manglara) |
-| `MEETING_WAKE_MODEL_PATH` | Ruta del modelo Vosk local en español (default: `server/models/vosk-model-small-es-0.42`) |
 | `MEETING_HEADLESS` | `false` abre la ventana de Chromium para depurar (default: true) |
 | `MEETING_CHROMIUM_EXECUTABLE` | Ruta de un Chromium instalado localmente si se quiere usar en lugar del que instala Playwright |
 | `MEETING_CHROME_PROFILE_DIR` | Perfil persistente con sesión iniciada (vacío = invitado) |

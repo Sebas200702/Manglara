@@ -1,6 +1,14 @@
 import type { TranscriptPanelProps } from "./transcript-panel-types";
 
-export function TranscriptPanel({ entries }: TranscriptPanelProps) {
+const DEFAULT_LABELS = { user: "Tú", model: "Manglara" } as const;
+const DEFAULT_EMPTY_TEXT =
+  "La transcripción aparecerá aquí cuando empieces a hablar con Manglara.";
+
+export function TranscriptPanel({
+  entries,
+  labels = DEFAULT_LABELS,
+  emptyText = DEFAULT_EMPTY_TEXT,
+}: TranscriptPanelProps) {
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <div className="shrink-0 border-b border-neutral-200 px-4 py-3">
@@ -11,7 +19,7 @@ export function TranscriptPanel({ entries }: TranscriptPanelProps) {
       <div className="flex-1 overflow-y-auto px-3 py-3">
         {entries.length === 0 ? (
           <p className="px-1 py-8 text-center text-xs text-neutral-500 leading-relaxed font-medium">
-            La transcripción aparecerá aquí cuando empieces a hablar con Manglara.
+            {emptyText}
           </p>
         ) : (
           <div className="flex flex-col gap-3">
@@ -29,7 +37,7 @@ export function TranscriptPanel({ entries }: TranscriptPanelProps) {
                     entry.role === "user" ? "text-accent-600" : "text-brand-600"
                   }`}
                 >
-                  {entry.role === "user" ? "Tú" : "Manglara"}
+                  {labels[entry.role]}
                 </span>
                 <p className="text-xs leading-relaxed font-medium">{entry.text}</p>
               </div>

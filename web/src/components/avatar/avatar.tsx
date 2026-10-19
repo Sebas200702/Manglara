@@ -12,7 +12,7 @@ export function Avatar({ state, containerRef }: AvatarProps) {
     <div className="relative h-full w-full" aria-label={`Avatar: ${state}`}>
       <div
         ref={containerRef}
-        className="absolute inset-0 [&>canvas]:!h-full [&>canvas]:!w-full"
+        className="absolute inset-0 [&>canvas]:h-full! [&>canvas]:w-full!"
       />
     </div>
   );

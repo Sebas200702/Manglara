@@ -26,6 +26,9 @@ class GeminiLiveClient:
         self.on_user_partial_transcript: Callable[[str], Any] | None = None
         self._user_text_buffer = ""
         self._receiving_output = False
+        # Off for meetings: third parties speak there, so their words (and
+        # Manglara's answers) stay out of the server logs.
+        self.log_transcripts = True
 
     async def connect(self, system_prompt: str | None = None):
         config = {
@@ -83,6 +86,15 @@ class GeminiLiveClient:
             turn_complete=False,
         )
 
+    async def send_text(self, text: str):
+        """Complete user turn from text: the model answers it right away."""
+        if not self.session:
+            return
+        await self.session.send_client_content(
+            turns=types.Content(role="user", parts=[types.Part(text=text)]),
+            turn_complete=True,
+        )
+
     async def receive_loop(self) -> AsyncIterator[bytes]:
         while True:
             async for response in self.session.receive():
@@ -114,7 +126,8 @@ class GeminiLiveClient:
                             await self.on_user_partial_transcript(
                                 self._user_text_buffer
                             )
-                        logger.info("[gemini] user transcript: %s", final.text[:100])
+                        if self.log_transcripts:
+                            logger.info("[gemini] user transcript: %s", final.text[:100])
 
                     # Model transcription (what Gemini is saying)
                     if getattr(sc, "output_transcription", None):
@@ -128,7 +141,8 @@ class GeminiLiveClient:
                         if text:
                             if self.transcript_callback:
                                 await self.transcript_callback("model", text)
-                            logger.info("[gemini] model transcript: %s", text[:100])
+                            if self.log_transcripts:
+                                logger.info("[gemini] model transcript: %s", text[:100])
 
                     # Barge-in: the user spoke over Manglara, so Gemini abandoned
                     # the rest of this turn. Everything already sent downstream is

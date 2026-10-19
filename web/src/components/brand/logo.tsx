@@ -25,7 +25,7 @@ export function Logo({ className, negative = false }: LogoProps) {
       aria-label="Habilidades Verdes Ya"
     >
       <span
-        className={`h-9 w-[5px] shrink-0 rounded-full ${negative ? "bg-white" : "bg-brand-300"}`}
+        className={`h-9 w-1.25 shrink-0 rounded-full ${negative ? "bg-white" : "bg-brand-300"}`}
         aria-hidden
       />
       <span className="flex flex-col leading-none">
@@ -41,12 +41,12 @@ export function Logo({ className, negative = false }: LogoProps) {
             Ver
             <span className="relative inline-flex items-center">
               d
-              <Leaf className={`mx-[-1px] size-4 -translate-y-[1px] ${leaf}`} />
+              <Leaf className={`-mx-px size-4 -translate-y-px ${leaf}`} />
               es
             </span>
           </span>
           <span
-            className={`translate-y-[-2px] rounded-md px-1.5 py-0.5 text-xs font-extrabold uppercase leading-none ${pill}`}
+            className={`translate-y-0.5 rounded-md px-1.5 py-0.5 text-xs font-extrabold uppercase leading-none ${pill}`}
           >
             Ya
           </span>

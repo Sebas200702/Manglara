@@ -7,10 +7,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from config import PORT
+from config import CORS_ALLOW_ORIGINS, MEETING_WEB_URL, PORT
 from db import list_active_documents
 from gemini_client import GeminiLiveClient
 from knowledge.router import auth_router, router as knowledge_router
+from meeting.router import router as meeting_router, ws_router as meeting_ws_router
 from pdf.digest import build_knowledge_context
 from pdf.retrieval import retrieve_context
 from pdf.router import router as pdf_router
@@ -44,9 +45,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+cors_origins = ["http://localhost:5173", "http://127.0.0.1:5173", *CORS_ALLOW_ORIGINS]
+if MEETING_WEB_URL and MEETING_WEB_URL not in cors_origins:
+    cors_origins.append(MEETING_WEB_URL)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -54,6 +59,8 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(knowledge_router)
 app.include_router(pdf_router)
+app.include_router(meeting_router)
+app.include_router(meeting_ws_router)
 
 
 @app.get("/health")

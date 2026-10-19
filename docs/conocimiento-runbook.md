@@ -67,10 +67,10 @@ compartirsela a la gestora. Borrarla de esa máquina si se recicla.
 
 ```bash
 # backend local con panel + auth
-cd server && uvicorn main:app --port 3000   # usa .env del repo
+cd server && uvicorn main:app --port 8000   # usa .env del repo
 
 # panel local
-cd web && bun run dev        # /conocimiento ya proxía /api al 3000
+cd web && bun run dev        # /conocimiento ya proxía /api al 8000
 
 # re-vectorizar todo tras cambiar de modelo de embeddings
 python scripts/reembed_chunk_sources.py          # simulación

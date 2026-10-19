@@ -29,3 +29,6 @@ docs/*.generated.txt
 # NOTE: custom_avatar.glb (Manglara, the foundation's own character) IS committed
 # so the deployed app can serve it (avatar 404'd in prod otherwise). If you move
 # it to a CDN, set VITE_AVATAR_URL instead and re-add the ignore below.
+
+# Perfil de Chromium del bot de reuniones: guarda cookies de sesión (secreto).
+.meeting-profile/

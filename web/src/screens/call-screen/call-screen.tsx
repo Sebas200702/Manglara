@@ -13,6 +13,7 @@ import { useCallScreen } from "./use-call-screen";
 import { Logo } from "../../components/brand/logo";
 import { PartnerLogos } from "../../components/brand/partner-logos";
 import { MangroveVideo } from "../../components/brand/mangrove-video";
+import { SectionNav } from "../../components/section-nav";
 
 const connectionLabels: Record<string, string> = {
   connected: "En llamada",
@@ -29,7 +30,6 @@ export function CallScreen() {
     connection,
     inCall,
     error,
-    notice,
     transcripts,
     loading,
     chatOpen,
@@ -45,19 +45,23 @@ export function CallScreen() {
   const statusLabel = connectionLabels[connection] ?? connection;
 
   return (
-    <div className="h-dvh flex flex-col bg-[#f8faf6] font-montserrat overflow-hidden select-none relative">
+    <div className="h-dvh flex flex-col bg-neutral-50 font-montserrat overflow-hidden select-none relative">
 
       {/* Header Bar */}
       <header className="flex h-16 shrink-0 items-center justify-between border-b border-neutral-200/80 bg-white px-4 sm:px-6 z-20 shadow-2xs">
         <div className="flex items-center gap-3">
-          <Logo />
-          <span className="h-5 w-[1px] bg-neutral-200 hidden sm:inline" />
+          <Logo className="shrink-0" />
+          <span className="h-5 w-px bg-neutral-200 hidden sm:inline" />
           <span className="text-xs font-bold text-neutral-400 uppercase tracking-widest mt-0.5 hidden sm:inline">
             Llamada virtual con Manglara
           </span>
         </div>
 
         <div className="flex items-center gap-2">
+          <SectionNav
+            locked={inCall}
+            lockedReason="Cuelga la llamada para cambiar de sección"
+          />
           {/* Status Indicator */}
           <span
             className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition-all border ${
@@ -77,7 +81,7 @@ export function CallScreen() {
                   : "bg-brand-400"
               }`}
             />
-            {inCall ? statusLabel : "Listo para hablar"}
+            <span className="hidden sm:inline">{inCall ? statusLabel : "Listo para hablar"}</span>
           </span>
         </div>
       </header>
@@ -87,12 +91,11 @@ export function CallScreen() {
 
         {/* Call Content Area */}
         <main className={`relative flex flex-col p-4 flex-1 ${chatOpen ? "col-span-1" : "col-span-2"}`}>
-          <div className="relative flex-1 overflow-hidden rounded-3xl bg-linear-to-b from-[#f7f9ec] via-[#dde8b7]/40 to-[#ccd63c]/15 border border-brand-200/60 shadow-inner">
+          <div className="relative flex-1 overflow-hidden rounded-3xl bg-linear-to-b from-brand-50 via-brand-200/40 to-brand-300/15 border border-brand-200/60 shadow-inner">
 
             {/* Mangrove environment backdrop (looping video + ambient sound).
                 The video shows only during the call, behind the avatar. */}
             <MangroveVideo
-              showVideo={inCall}
               ambient={inCall}
               ducked={avatarState === "speaking"}
             />
@@ -143,17 +146,6 @@ export function CallScreen() {
               </p>
             )}
 
-            {notice && (
-              <p
-                className={`text-center text-xs px-4 py-2 rounded-xl shadow-lg border font-bold ${
-                  notice.tone === "warn"
-                    ? "bg-status-warning/90 text-neutral-900 border-status-warning/40 animate-pulse"
-                    : "bg-status-success/90 text-white border-status-success/30"
-                }`}
-              >
-                {notice.text}
-              </p>
-            )}
 
             <div className="flex items-center gap-3 rounded-full border border-brand-200/50 bg-white/90 backdrop-blur-md px-5 py-3 shadow-xl transition-all">
               {/* Mic toggle */}
@@ -214,7 +206,7 @@ export function CallScreen() {
                 )}
               </button>
 
-              <span className="h-6 w-[1px] bg-neutral-200" />
+              <span className="h-6 w-px bg-neutral-200" />
 
               {/* Call Join/End Action Button */}
               {!inCall ? (

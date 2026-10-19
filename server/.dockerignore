@@ -1,0 +1,9 @@
+# Contexto de build del backend: fuera el venv local (357 MB) y los caches.
+.venv
+__pycache__
+*.pyc
+*.pyo
+.env
+.env.*
+.meeting-profile
+.git

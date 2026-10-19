@@ -126,7 +126,7 @@ async def main():
     if ok:
         print("\nPara activar un documento en la llamada:")
         for r in ok:
-            print(f'  curl -X POST http://localhost:3000/api/documents/{r["document_id"]}/activate')
+            print(f'  curl -X POST http://localhost:8000/api/documents/{r["document_id"]}/activate')
 
 
 if __name__ == "__main__":

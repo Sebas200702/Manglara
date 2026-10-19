@@ -207,7 +207,7 @@ export class VisemeDriver {
   }
 
   /** Legacy compatibility wrapper */
-  tick(input: { dt: number; speaking: boolean; audioFedMs?: number; playedMs?: number }): string | null {
+  tick(input: { dt: number; speaking: boolean; audioFedMs?: number; playedMs?: number; naturalPace?: boolean }): string | null {
     if (!input.speaking) {
       this.reset();
       return null;

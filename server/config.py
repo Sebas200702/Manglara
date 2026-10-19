@@ -25,7 +25,7 @@ GEMINI_LIVE_MODEL = os.getenv(
 )
 GEMINI_DIGEST_MODEL = os.getenv("GEMINI_DIGEST_MODEL", "models/gemini-3.5-flash")
 GEMINI_VOICE_NAME = os.getenv("GEMINI_VOICE_NAME", "Zephyr")
-PORT = int(os.getenv("PORT", "3000"))
+PORT = int(os.getenv("PORT", "8000"))
 
 # Orígenes extra del frontend con permiso CORS (coma-separados), p. ej. la web
 # desplegada: la pantalla de reuniones llama a la API REST del backend.

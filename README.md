@@ -36,7 +36,7 @@ bun run dev:py
 ```
 
 - Frontend: http://localhost:5173
-- Backend + WebSocket: http://localhost:3000 (`/ws/voice`, `/health`)
+- Backend + WebSocket: http://localhost:8000 (`/ws/voice`, `/health`)
 
 ## Desarrollo (backend TypeScript + frontend Vite)
 
@@ -122,7 +122,7 @@ bun run --filter server start
 | `GEMINI_API_KEY` | API key de Google AI |
 | `GEMINI_LIVE_MODEL` | Modelo Live (default: gemini-3.1-flash-live-preview) |
 | `GEMINI_VOICE_NAME` | Voz predefinida (default: Zephyr) |
-| `PORT` | Puerto del backend (default: 3000) |
+| `PORT` | Puerto del backend (default: 8000) |
 | `CORS_ALLOW_ORIGINS` | Orígenes extra del frontend con permiso CORS, coma-separados (la web desplegada) |
 | `MEETING_BOT_NAME` | Nombre del bot en la reunión (default: Manglara) |
 | `MEETING_HEADLESS` | `false` abre la ventana de Chromium para depurar (default: true) |

@@ -1,8 +1,7 @@
 import type { AvatarState } from "@manglara/shared";
 import { TalkingHead } from "@met4citizen/talkinghead";
 import type { PlaybackMetricsMessage } from "@met4citizen/talkinghead";
-import { CanvasTexture, MeshBasicMaterial, SRGBColorSpace } from "three";
-import type { Mesh } from "three";
+import * as THREE from "three";
 // Statically bundle the English lip-sync processor. TalkingHead otherwise loads
 // it via `import('./lipsync-en.mjs')` - an un-analyzable dynamic import that
 // Rollup can't bundle, so in production it 404s at /assets/lipsync-en.mjs. We
@@ -24,12 +23,6 @@ const VISEME_LEVEL = 0.78;
 /** Lip closure (P/B/M, F/V) has to look definite to read as a closure. */
 const VISEME_LEVEL_CLOSED = 0.95;
 
-/**
- * How long the shape queue must stay dry, with audio still playing, before the
- * audio-driven fallback takes the mouth back. Long enough that the ordinary gaps
- * between transcript fragments never trigger a swap.
- */
-const HANDOVER_AFTER_DRY_MS = 900;
 
 /**
  * How often the playback worklet reports its queue depth. Its queue is the only
@@ -176,9 +169,9 @@ export class AvatarController {
   // mouth region (transparent at rest). Each frame we paint a viseme-driven
   // mouth (dark cavity + teeth) onto it, so the character visibly opens her
   // mouth while talking - morphs alone can't show a cavity on a sealed mesh.
-  private mouthMesh: Mesh | null = null;
+  private mouthMesh: THREE.Mesh | null = null;
   private mouthCtx: CanvasRenderingContext2D | null = null;
-  private mouthTex: CanvasTexture | null = null;
+  private mouthTex: THREE.CanvasTexture | null = null;
   private lastShape: LipShape | null = null;
 
   // Text-driven lip-sync. Mouth shapes come from the transcript and are consumed
@@ -235,8 +228,6 @@ export class AvatarController {
   /** Debug: log the driving source and timing. `window.__lipsyncLog`. */
   private diagnose = false;
   private diagLastLog = 0;
-  /** How long the shape queue has been dry while audio kept playing, ms. */
-  private dryMs = 0;
   /**
    * Debug capture of the live timeline (`window.__lipsyncRecord`). Answers the
    * one question tuning cannot: does a transcript fragment arrive aligned in
@@ -502,9 +493,10 @@ export class AvatarController {
         mt.needsUpdate = true;
         // Synchronously copy to Three.js morphTargetInfluences so drawMouth() reads current values immediately
         if (Array.isArray(mt.ms)) {
+          const isArr = mt.is as number[] | undefined;
           for (let i = 0; i < mt.ms.length; i++) {
-            if (mt.ms[i] && mt.is[i] !== undefined) {
-              mt.ms[i][mt.is[i]] = val;
+            if (mt.ms[i] && isArr && isArr[i] !== undefined) {
+              mt.ms[i][isArr[i]!] = val;
             }
           }
         }
@@ -731,8 +723,8 @@ export class AvatarController {
     let shape: string | null = null;
 
     if (speaking && this.analyserNode && this.freqData && this.timeData) {
-      this.analyserNode.getByteFrequencyData(this.freqData);
-      this.analyserNode.getByteTimeDomainData(this.timeData);
+      this.analyserNode.getByteFrequencyData(this.freqData as unknown as Uint8Array<ArrayBuffer>);
+      this.analyserNode.getByteTimeDomainData(this.timeData as unknown as Uint8Array<ArrayBuffer>);
       shape = this.driver.tickFrame({
         dt,
         frequencyData: this.freqData,
@@ -771,7 +763,6 @@ export class AvatarController {
     this.driver.reset();
     this.audioFedMs = 0;
     this.textInCharge = false;
-    this.dryMs = 0;
     // The playback clock is relative to `audioFedMs`, so it has to go with it.
     this.syncPlayedMs = 0;
     this.syncAt = 0;
@@ -1013,10 +1004,10 @@ export class AvatarController {
    *  CanvasTexture we can repaint per frame. Non-fatal if missing (older GLB). */
   private setupMouthSprite(head: TalkingHead): void {
     try {
-      const root = (head as unknown as { armature?: Mesh }).armature;
-      let overlay: Mesh | null = null;
-      root?.traverse?.((o) => {
-        if ((o as Mesh).isMesh && o.name === "MouthOverlay") overlay = o as Mesh;
+      const root = (head as unknown as { armature?: THREE.Mesh }).armature;
+      let overlay: THREE.Mesh | null = null;
+      root?.traverse?.((o: any) => {
+        if ((o as THREE.Mesh).isMesh && o.name === "MouthOverlay") overlay = o as THREE.Mesh;
       });
       if (!overlay) {
         console.warn("[mouth] MouthOverlay mesh not found in avatar GLB");
@@ -1027,15 +1018,15 @@ export class AvatarController {
       canvas.height = 256;
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
-      const tex = new CanvasTexture(canvas);
-      tex.colorSpace = SRGBColorSpace;
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
       tex.flipY = false; // glTF UV convention (v=0 at the top of the patch)
-      (overlay as Mesh).material = new MeshBasicMaterial({
+      (overlay as THREE.Mesh).material = new THREE.MeshBasicMaterial({
         map: tex,
         transparent: true,
         depthWrite: false,
       });
-      (overlay as Mesh).renderOrder = 2;
+      (overlay as THREE.Mesh).renderOrder = 2;
       this.mouthMesh = overlay;
       this.mouthCtx = ctx;
       this.mouthTex = tex;

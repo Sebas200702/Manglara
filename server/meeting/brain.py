@@ -22,6 +22,7 @@ from db import list_active_documents
 from gemini_client import GeminiLiveClient
 from pdf.digest import build_knowledge_context
 from pdf.retrieval import retrieve_context
+from prompt import CONTEXT_NOTE
 from .prompt import build_meeting_prompt
 from .wake_gate import WakeGate
 
@@ -231,11 +232,7 @@ class MeetingBrain:
                 return
             context = await retrieve_context(doc_ids, text)
             if context:
-                await gemini.inject_context(
-                    "[Contexto recuperado automáticamente de las cartillas del "
-                    "Currículo Verde; nadie en la reunión escribió esto. Úsalo para "
-                    f"responder.]\n\n{context}"
-                )
+                await gemini.inject_context(CONTEXT_NOTE + "\n\n" + context)
                 logger.info("[brain] contexto RAG inyectado: %d chars", len(context))
         except Exception as e:
             logger.warning("[brain] RAG falló: %s", e)

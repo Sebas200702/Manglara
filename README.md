@@ -80,7 +80,7 @@ Manglara puede unirse a reuniones externas de Microsoft Teams, Zoom y Google Mee
 3. Crea una reunión de prueba vacía en Teams, Zoom o Meet y copia el link (ver `docs/meeting-test-guide.md`).
 4. Pega el link (o el ID de Zoom/Meet) → el badge detecta el proveedor → **Conectar**.
 5. Desde la reunión, como anfitrión, **admite a "Manglara"** desde la sala de espera. La web pasa a "En reunión (dormida)": se ve el avatar pero no escucha ni habla.
-6. Pulsa **▶ Iniciar Manglara Meeting Live**: se presenta y responde a los participantes.
+6. Pulsa **▶ Iniciar Manglara Meeting Live**: Manglara escucha a los participantes y responde en la reunión.
 7. Controles: **Silenciar** (corta su voz; sigue escuchando), **Cámara**, **Apagar interacción** (vuelve a dormida, reactivable) y **Desconectar** (sale y libera todo).
 
 Para ver qué hace el bot, arranca el backend con `MEETING_HEADLESS=false`: se abre la ventana de Chromium.
@@ -115,6 +115,126 @@ bun run build
 bun run --filter server start
 ```
 
+## Despliegue (Dokploy / VPS)
+
+Hay **dos apps** en Dokploy, una por servicio, del mismo repo:
+
+| App | Build Path | Build Type | Puerto | Qué sirve |
+|---|---|---|---|---|
+| `frontend` | `/` (raíz) | `railpack` | 80 | La SPA (Vite) servida por Caddy |
+| `server` | `/server` | `dockerfile` | 8000 | El backend FastAPI (API REST + WS de voz) |
+
+### Frontend: por qué el build path es la raíz
+
+La web es un workspace de un monorepo (`packages/shared` + `web`) y la
+dependencia `@manglara/shared` **nunca se publica en npm**: solo existe en el
+repo. Por eso el build **no** puede correr en el subdirectorio `web/`; si lo
+hace, `npm install` busca `@manglara/shared` en el registro y falla con
+`404 Not Found - GET https://registry.npmjs.org/@manglara/shared`.
+
+Configuración en Dokploy (Application → General → Build):
+
+|Ajuste | Valor | Por qué |
+|---|---|---|
+| Build Path | `/` (raíz del repo, **no** `/web`) | Railpack solo resuelve workspaces npm/bun si el `package.json` raíz está en el contexto del build. Con `/web` desaparece `packages/shared` |
+| Build Type | `railpack` | — |
+| Env → `RAILPACK_SPA_OUTPUT_DIR` | `web/dist` | Fuerza el modo sitio estático (Caddy) y le dice a Railpack dónde queda el `dist`, que al compilar en la raíz queda en `web/dist` |
+
+En la raíz hay un `railpack.json` que fija `"provider": "node"`: sin él Railpack
+ve el `pyproject.toml` de la raíz (config de pyright) y despliega el backend
+Python en vez de la web.
+
+El `Caddyfile` de la raíz sustituye al de Railpack: sirve `web/dist` y además
+proxea `/api/*` y `/ws/*` al backend, para que el panel de conocimiento hable con
+la API en el **mismo origen** y su cookie de sesión sea first-party (sin CORS
+con credenciales).
+
+### Traefik: sin él no hay dominio que funcione
+
+Traefik es el proxy de Dokploy: es el único que **publica 80/443 en el host** y
+el que enruta cada dominio a su contenedor. Si el contenedor `dokploy-traefik`
+no existe, las apps se despliegan y arrancan igual, pero **no son accesibles
+desde internet** y no se emite ningún certificado.
+
+El instalador de Dokploy lo crea así (bloque literal de su `install.sh`):
+
+```bash
+docker run -d --name dokploy-traefik --restart always --network dokploy-network \
+  -v /etc/dokploy/traefik/traefik.yml:/etc/traefik/traefik.yml \
+  -v /etc/dokploy/traefik/dynamic:/etc/dokploy/traefik/dynamic \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -p 80:80/tcp -p 443:443/tcp -p 443:443/udp traefik:v3.6.25
+```
+
+Si Traefik falta, el instalador se queda a medias (el script aborta si 80, 443 o
+3000 ya están ocupados) y Dokploy arranca sin proxy. Cómo detectarlo:
+
+```bash
+# en el health check de Dokploy (Settings -> Traefik) o por consola:
+docker ps --filter name=dokploy-traefik
+curl -s http://localhost:3000/api/health   # -> "traefik": {"status":"healthy"}
+```
+
+Los routers de cada dominio los escribe Dokploy en
+`/etc/dokploy/traefik/dynamic/<appName>.yml`; si el contenedor no corre, esos
+archivos existen pero no sirven de nada.
+
+### Dominios
+
+| Dominio | App | Puerto |
+|---|---|---|
+| `manglara.app`, `www.manglara.app` | frontend | 80 |
+| `api.manglara.app` | server | 8000 |
+
+Los registros A apuntan a la IP del VPS y están **proxied** (nube naranja de
+Cloudflare). El certificado lo emite Let's Encrypt por HTTP-01: Cloudflare
+deja pasar el reto a Traefik por el puerto 80, así que no hace falta un token
+de API de Cloudflare ni cambiar el resolver a `dnsChallenge`.
+
+### Frontend: variables de entorno
+
+Vite *inlinea* las `VITE_*` en build time, así que van en el build, no solo en
+runtime:
+
+| Variable | Para qué |
+|---|---|
+| `VITE_BACKEND_URL` | Origen del backend (`https://api.tu-dominio.co`). Si no está, el bundle apunta a `localhost:8000` |
+| `BACKEND_URL` | El mismo origen, para el proxy `/api` y `/ws` del Caddyfile |
+| `RAILPACK_SPA_OUTPUT_DIR` | `web/dist` (ver arriba) |
+| `VITE_AVATAR_URL` | Opcional. Ruta del GLB del avatar. Por defecto `/custom_avatar.glb` |
+
+### Server: imagen propia
+
+`server/Dockerfile` (python:3.13-slim + Chromium de Playwright) es la forma de
+desplegar el backend en Dokploy; `render.yaml` sigue siendo la vía para Render.
+Dos detalles que no son obvios:
+
+- **Usuario sin privilegios.** Chromium se niega a arrancar como root salvo con
+  `--no-sandbox`, y no se quiere bajar el aislamiento del navegador que entra a
+  reuniones ajenas. El Dockerfile crea `manglara` (uid 1000).
+- **`--proxy-headers` en uvicorn.** Traefik va delante; sin esto la app no ve la
+  IP real del cliente (afecta al límite de intentos de login del panel).
+
+Variables del server: `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`,
+`SUPABASE_DB_URL` (obligatorias), `ADMIN_PASSWORD_HASH` + `SESSION_SECRET` (panel
+de conocimiento; la clave se genera con `python scripts/hash_password.py`),
+`CORS_ALLOW_ORIGINS` / `KNOWLEDGE_ALLOWED_ORIGINS` / `MEETING_WEB_URL` con el
+origen de la web, y las `MEETING_*` del bot de reuniones.
+
+### Requisito del host: puertos 80 y 443
+
+Traefik (el proxy de Dokploy) publica 80 y 443. Si el firewall del VPS o el
+grupo de seguridad del proveedor los bloquea, las apps quedan desplegadas pero
+**no accesibles desde internet** (y Let's Encrypt no puede emitir el
+certificado). Comprobar y abrir:
+
+```bash
+sudo ufw allow 80/tcp && sudo ufw allow 443/tcp && sudo ufw reload
+# o, con firewalld:
+sudo firewall-cmd --permanent --add-service=http --add-service=https
+sudo firewall-cmd --reload
+```
+
 ## Variables de entorno
 
 | Variable | Descripción |
@@ -126,6 +246,7 @@ bun run --filter server start
 | `CORS_ALLOW_ORIGINS` | Orígenes extra del frontend con permiso CORS, coma-separados (la web desplegada) |
 | `MEETING_BOT_NAME` | Nombre del bot en la reunión (default: Manglara) |
 | `MEETING_HEADLESS` | `false` abre la ventana de Chromium para depurar (default: true) |
+| `MEETING_CHROMIUM_EXECUTABLE` | Ruta de un Chromium instalado localmente si se quiere usar en lugar del que instala Playwright |
 | `MEETING_CHROME_PROFILE_DIR` | Perfil persistente con sesión iniciada (vacío = invitado) |
 | `MEETING_MAX_DURATION_MIN` | Duración máxima de una reunión (default: 180) |
 | `MEETING_ALONE_TIMEOUT_MIN` | Sale si se queda sola este tiempo; 0 = nunca (default: 10) |

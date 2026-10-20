@@ -15,7 +15,7 @@ from meeting.router import router as meeting_router, ws_router as meeting_ws_rou
 from pdf.digest import build_knowledge_context
 from pdf.retrieval import retrieve_context
 from pdf.router import router as pdf_router
-from prompt import build_system_prompt
+from prompt import CONTEXT_NOTE, LANGUAGE_REMINDER, build_system_prompt
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,6 +28,8 @@ logger = logging.getLogger("server")
 # reaches Gemini before it starts answering.
 RAG_MIN_CHARS = 40  # partial transcript length that triggers retrieval at once
 RAG_DEBOUNCE_S = 0.3  # for shorter partials, wait for a pause in the stream
+# Cada cuántos turnos se le recuerda que responda en el idioma de la persona.
+LANG_REMIND_EVERY = 4
 
 
 @asynccontextmanager
@@ -111,6 +113,16 @@ async def ws_voice(ws: WebSocket):
         await ws.send_json({"type": "interrupted"})
 
     rag = {"fired": False, "debounce": None}
+    # Refuerzo del idioma: el modelo detecta el idioma de la persona (no hay
+    # lista de idiomas en Python: la detecta el modelo, que es mucho mejor),
+    # pero el prompt y las cartillas están en español y, con el contexto
+    # creciendo, se le olvida. Se le recuerda cada pocos turnos, ya con la
+    # persona hablando para que el recordatorio no dispare una respuesta.
+    lang = {"turn": 0, "sent": False}
+
+    async def remind_language():
+        await gemini.inject_context(LANGUAGE_REMINDER)
+        logger.info("[lang] recordatorio de idioma inyectado")
 
     async def run_retrieval(text: str):
         try:
@@ -120,11 +132,7 @@ async def ws_voice(ws: WebSocket):
                 return
             context = await retrieve_context(doc_ids, text)
             if context:
-                await gemini.inject_context(
-                    "[Contexto recuperado automáticamente de las cartillas del "
-                    "Currículo Verde; el usuario no escribió esto. Úsalo para "
-                    f"responder.]\n\n{context}"
-                )
+                await gemini.inject_context(CONTEXT_NOTE + "\n\n" + context)
                 logger.info("[rag] injected %d chars of context", len(context))
         except Exception as e:
             logger.warning("[rag] retrieval failed: %s", e)
@@ -135,6 +143,9 @@ async def ws_voice(ws: WebSocket):
         rag["debounce"] = None
 
     async def on_user_partial(text: str):
+        if not lang["sent"] and lang["turn"] % LANG_REMIND_EVERY == 0:
+            lang["sent"] = True
+            asyncio.create_task(remind_language())
         if rag["fired"]:
             return
         cancel_debounce()
@@ -159,6 +170,8 @@ async def ws_voice(ws: WebSocket):
         cancel_debounce()
         fired = rag["fired"]
         rag["fired"] = False
+        lang["turn"] += 1
+        lang["sent"] = False
         if not fired and text.strip():
             asyncio.create_task(run_retrieval(text))
 

@@ -47,6 +47,7 @@ MEETING_HEADLESS = os.getenv("MEETING_HEADLESS", "true").lower() in (
     "true",
     "yes",
 )
+MEETING_CHROMIUM_EXECUTABLE = os.getenv("MEETING_CHROMIUM_EXECUTABLE", "")
 # Directorio de perfil persistente de Chromium para cuentas pre-logueadas
 # (necesario para Meet). Vacío = perfil efímero (invitado).
 MEETING_CHROME_PROFILE_DIR = os.getenv("MEETING_CHROME_PROFILE_DIR", "")

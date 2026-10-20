@@ -32,3 +32,4 @@ docs/*.generated.txt
 
 # Perfil de Chromium del bot de reuniones: guarda cookies de sesión (secreto).
 .meeting-profile/
+server/models/

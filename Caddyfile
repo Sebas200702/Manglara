@@ -1,0 +1,64 @@
+# Caddyfile del front de Manglara.
+#
+# Railpack usa este archivo en lugar de su plantilla por defecto (spa.go:
+# TemplateFiles busca "Caddyfile" en la raiz del build path). Se sirve el
+# build de Vite (web/dist) y se proxea el backend para que el panel de
+# conocimiento hable con /api/* de este mismo origen: asi la cookie de
+# sesion es first-party y no hace falta CORS con credenciales.
+#
+# El backend se resuelve con la variable de entorno BACKEND_URL; el valor por
+# defecto evita que el contenedor se caiga si la variable no llegara.
+{
+	admin off
+	persist_config off
+	auto_https off
+
+	log {
+		format json
+	}
+
+	servers {
+		trusted_proxies static private_ranges 100.0.0.0/8
+	}
+}
+
+:{$PORT:80} {
+	log {
+		format json
+	}
+
+	respond /health 200
+
+	header {
+		X-Content-Security-Policy "nosniff"
+		-Server
+	}
+
+	# API REST del backend (panel de conocimiento, ingesta de fuentes).
+	handle /api/* {
+		reverse_proxy {$BACKEND_URL:https://api.manglara.app}
+	}
+
+	# WebSocket de voz, por si el front se deja de hablar con el backend
+	# absoluto y usa el mismo origen. La ruta real es /ws/voice.
+	handle /ws/* {
+		reverse_proxy {$BACKEND_URL:https://api.manglara.app}
+	}
+
+	handle {
+		root * {{.DIST_DIR}}
+
+		file_server {
+			hide .git
+			hide .env*
+		}
+
+		encode {
+			gzip
+			zstd
+		}
+
+		# Fallback de la SPA: /conocimiento, /reunion, /meeting/avatar...
+		try_files {path} {path}.html {path}/index.html /index.html
+	}
+}

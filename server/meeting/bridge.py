@@ -108,7 +108,11 @@ class MeetingBridge:
             self._ws_down_since = time.monotonic()
             entry = self.recipe.entry_url(s.url)
             logger.info("[meeting] navegando a reunión (%s)", s.provider)
-            await self.browser.page.goto(entry, timeout=60000)
+            # "load" puede no llegar nunca en las SPA de los proveedores
+            # (Teams deja peticiones colgadas); la receta espera sus botones.
+            await self.browser.page.goto(
+                entry, timeout=60000, wait_until="domcontentloaded"
+            )
             try:
                 await self.recipe.join(self.browser.page, s.name)
             except Exception as e:
@@ -309,7 +313,7 @@ class MeetingBridge:
             except Exception as e:
                 await brain.stop()
                 s.brain = "off"
-                s.error = f"No se pudo iniciar Gemini Live: {str(e)[:200]}"
+                s.error = f"No se pudo iniciar la interacción: {str(e)[:200]}"
                 logger.error("[meeting] brain_start falló: %s", e)
                 await self.set_mic(False)
                 raise

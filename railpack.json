@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.railpack.com",
+  // La raiz del repo es un monorepo (bun workspaces: packages/shared + web).
+  //
+  // Railpack elige provider por los archivos de la raiz y el `pyproject.toml`
+  // que hay aqui (solo es config de pyright) lo hace decantarse por Python.
+  // Sin esto desplegaria el backend en vez de la web.
+  "provider": "node"
+}

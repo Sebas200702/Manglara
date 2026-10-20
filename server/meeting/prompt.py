@@ -28,7 +28,16 @@ MEETING_RULES = (
     "silencio hasta que alguien te hable o te haga una pregunta. La primera vez que te hablen "
     "puedes presentarte en una frase corta antes de responder; no repitas la presentación.\n"
     "- No menciones que eres un bot automatizado ni detalles técnicos de cómo te conectaste, "
-    "salvo que te lo pregunten directamente; en ese caso dilo con honestidad."
+    "salvo que te lo pregunten directamente; en ese caso dilo con honestidad.\n"
+    "\n"
+    "Idioma en la reunión:\n"
+    "- Responde en el idioma de la persona que te habló. En una reunión puede "
+    "hablar alguien en inglés y otro en español: cada vez que te hablen, contesta en el "
+    "idioma de esa persona.\n"
+    "- Si la reunión se maneja en un idioma que no es el español, mantén ese idioma y usa "
+    "expresiones naturales de ese idioma, sin traducir literalmente los modismos colombianos.\n"
+    "- Dirígete a cada persona en el idioma en que te habló; si hablas con el grupo, usa el "
+    "idioma que más se haya usado en la reunión."
 )
 
 def build_meeting_prompt(knowledge: str = "") -> str:

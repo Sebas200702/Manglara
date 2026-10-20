@@ -15,6 +15,7 @@ from playwright.async_api import async_playwright
 
 from config import (
     MEETING_AVATAR_URL,
+    MEETING_CHROMIUM_EXECUTABLE,
     MEETING_CHROME_PROFILE_DIR,
     MEETING_HEADLESS,
     MEETING_WEB_URL,
@@ -163,6 +164,7 @@ class MeetingBrowser:
                     MEETING_CHROME_PROFILE_DIR,
                     headless=headless,
                     args=args,
+                    executable_path=MEETING_CHROMIUM_EXECUTABLE or None,
                     viewport={"width": 1280, "height": 720},
                     # 1:1 aunque Windows escale la pantalla (MEETING_HEADLESS=false):
                     # a 150 % el avatar y la reunión se renderizarían 2,25x píxeles.
@@ -178,7 +180,9 @@ class MeetingBrowser:
             )
         else:
             self._browser = await self._pw.chromium.launch(
-                headless=headless, args=args
+                headless=headless,
+                args=args,
+                executable_path=MEETING_CHROMIUM_EXECUTABLE or None,
             )
             self._context = await self._browser.new_context(
                 viewport={"width": 1280, "height": 720},

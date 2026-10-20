@@ -59,6 +59,11 @@ MEETING_AVATAR_URL = os.getenv("MEETING_AVATAR_URL", "/meeting/avatar")
 # Origen público de la web app (Vite en dev). Vacío desactiva el avatar y la
 # cámara queda con el logo animado.
 MEETING_WEB_URL = os.getenv("MEETING_WEB_URL", "http://localhost:5173").rstrip("/")
+# Silencio (ms) tras el que Gemini da por terminado el turno de un participante,
+# con fin de voz en sensibilidad alta. Medido: 500 ms responde ~0.4 s antes que
+# el VAD por defecto; menos no gana nada y corta a quien hace pausas. 0 = VAD
+# por defecto de Gemini.
+MEETING_VAD_SILENCE_MS = int(os.getenv("MEETING_VAD_SILENCE_MS", "500"))
 
 # --- Panel de conocimiento (Fase 1) --------------------------------
 # Acceso: una sola clave compartida con los gestores.

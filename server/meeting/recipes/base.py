@@ -60,11 +60,17 @@ async def poll_with_selectors(page, selectors: dict) -> str:
     try:
         return await page.evaluate(
             """(sel) => {
+              // innerText fuerza layout y serializa la página entera: leerlo
+              // una vez por poll, no una vez por cada candidato de texto.
+              let text = null;
+              const bodyText = () => {
+                if (text === null) text = (document.body && document.body.innerText) || '';
+                return text;
+              };
               const any = (list) => (list || []).some(m => {
                 try {
                   if (m.selector && document.querySelector(m.selector)) return true;
-                  if (m.text && document.body && document.body.innerText &&
-                      document.body.innerText.includes(m.text)) return true;
+                  if (m.text && bodyText().includes(m.text)) return true;
                 } catch (_) {}
                 return false;
               });

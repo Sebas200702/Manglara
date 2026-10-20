@@ -9,12 +9,14 @@
  *  1. Overrides getUserMedia/enumerateDevices -> synthetic MediaStream:
  *       audio track = MediaStreamAudioDestinationNode (fake mic, starts MUTED)
  *       video track = canvas.captureStream(30): the avatar page (hidden
- *       iframe, `avatarUrl`) streams ImageBitmap frames that are painted on
- *       the canvas; an animated logo is the fallback until frames arrive.
+ *       iframe, `avatarUrl`) streams finished ImageBitmap frames that are
+ *       handed to the canvas without copying (bitmaprenderer); an animated
+ *       logo is the fallback until frames arrive.
  *  2. Tees remote participant audio: patches RTCPeerConnection 'track' events
  *     -> MediaStreamSource -> AudioWorklet downsample 16 kHz mono Int16
- *     -> {type:"remote_pcm"} over the control WebSocket.
- *  3. Plays bot audio: {type:"bot_pcm"} (24 kHz PCM16 from Gemini) ->
+ *     -> binary frames over the control WebSocket, only while the backend
+ *     listens (set_listen: Manglara's brain is on).
+ *  3. Plays bot audio: binary frames (24 kHz PCM16 from Gemini) ->
  *     AudioBufferSourceNode -> fake mic, gated by set_mic. The same PCM and
  *     her transcript (lip_text) go to the avatar iframe for lip-sync.
  *  4. Reports lifecycle: ready / gum_called / meeting_state / left / log.
@@ -75,6 +77,16 @@
   }
   window.__manglaraBridgeReport = report;
 
+  // Audio goes as raw binary frames: no base64 (+33 % bytes) and no JSON on a
+  // main thread the meeting app already keeps busy. Never queued: audio that
+  // missed a disconnected socket is stale by the time it reconnects.
+  function sendBinary(buf) {
+    if (!ws || ws.readyState !== 1) return;
+    try {
+      ws.send(buf);
+    } catch (_) {}
+  }
+
   function connectWs() {
     if (wsDead || !WS_URL) return;
     var sock;
@@ -86,6 +98,7 @@
       setTimeout(connectWs, 3000);
       return;
     }
+    sock.binaryType = "arraybuffer";
     sock.onopen = function () {
       ws = sock;
       while (queue.length) {
@@ -98,6 +111,10 @@
       report({ type: "ready" });
     };
     sock.onmessage = function (ev) {
+      if (ev.data instanceof ArrayBuffer) {
+        playBotPcm(ev.data);
+        return;
+      }
       var msg = null;
       try {
         msg = JSON.parse(ev.data);
@@ -141,6 +158,18 @@
   var camCanvas = document.createElement("canvas");
   camCanvas.width = CAM_W;
   camCanvas.height = CAM_H;
+  // The avatar page sends finished frames (background included), so the
+  // camera canvas only has to show them: a bitmaprenderer takes ownership of
+  // each ImageBitmap with no copy and no 2D drawing. The logo fallback is
+  // drawn off-screen and handed over the same way.
+  var camBR = null;
+  try {
+    if (typeof OffscreenCanvas !== "undefined") {
+      camBR = camCanvas.getContext("bitmaprenderer");
+    }
+  } catch (_) {}
+  var cam2d = camBR ? null : camCanvas.getContext("2d");
+  var logoCanvas = camBR ? new OffscreenCanvas(CAM_W, CAM_H) : camCanvas;
   var camStream = null;
   var camTrack = null;
   var camOn = true;
@@ -161,17 +190,21 @@
 
   function drawAvatarFrame(bitmap) {
     lastAvatarFrameAt = Date.now();
-    try {
-      if (camOn) {
-        var ctx = camCanvas.getContext("2d");
-        paintBackground(ctx);
+    if (camOn && camBR) {
+      try {
+        camBR.transferFromImageBitmap(bitmap);
+        return;
+      } catch (_) {}
+    } else if (camOn) {
+      try {
+        paintBackground(cam2d);
         // Contain-fit (the avatar page renders 4:3 too, so usually 1:1).
         var s = Math.min(CAM_W / bitmap.width, CAM_H / bitmap.height);
         var w = bitmap.width * s;
         var h = bitmap.height * s;
-        ctx.drawImage(bitmap, (CAM_W - w) / 2, (CAM_H - h) / 2, w, h);
-      }
-    } catch (_) {}
+        cam2d.drawImage(bitmap, (CAM_W - w) / 2, (CAM_H - h) / 2, w, h);
+      } catch (_) {}
+    }
     try {
       bitmap.close();
     } catch (_) {}
@@ -181,7 +214,7 @@
     if (!camOn) return;
     if (Date.now() - lastAvatarFrameAt < AVATAR_STALE_MS) return;
     frame++;
-    var ctx = camCanvas.getContext("2d");
+    var ctx = logoCanvas.getContext("2d");
     var t = frame / 2;
     paintBackground(ctx);
     var r = 90 + 8 * Math.sin(t * 1.4);
@@ -199,6 +232,11 @@
     ctx.font = "20px sans-serif";
     ctx.fillStyle = "rgba(255,255,255,0.75)";
     ctx.fillText("asistente virtual", 320, 382);
+    if (camBR) {
+      try {
+        camBR.transferFromImageBitmap(logoCanvas.transferToImageBitmap());
+      } catch (_) {}
+    }
   }
   setInterval(drawPlaceholder, 500);
   drawPlaceholder();
@@ -257,9 +295,14 @@
     if (!d || d.__manglara !== "avatar") return;
     if (d.type === "frame" && d.bitmap) {
       drawAvatarFrame(d.bitmap);
+      // Flow control: the avatar sends the next frame only after this ack, so
+      // a busy meeting page drops frames instead of piling them up (which
+      // showed as a video lagging further and further behind).
+      postToAvatar({ type: "ack" });
     } else if (d.type === "ready") {
       avatarReady = true;
       postToAvatar({ type: "state", state: avatarState });
+      postToAvatar({ type: "cam", enabled: camOn });
       report({ type: "avatar_ready" });
     }
   });
@@ -307,30 +350,32 @@
   // tracked so a barge-in / brain stop can drop the stale tail ("flush").
   var playCursor = 0;
   var pendingSources = [];
-  function playBotPcm(b64) {
+  function b64ToBuffer(b64) {
+    var bin = atob(b64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes.buffer;
+  }
+  // `pcm`: ArrayBuffer of 24 kHz PCM16 LE (binary WS frame), or base64 from
+  // the older JSON {type:"bot_pcm"} message / the debug surface.
+  function playBotPcm(pcm) {
     try {
+      if (typeof pcm === "string") pcm = b64ToBuffer(pcm);
+      var n = pcm.byteLength >> 1;
+      if (n <= 0) return;
       ensureMic();
       var ctx = audioCtx();
-      var bin = atob(b64);
-      var n = Math.floor(bin.length / 2);
-      if (n <= 0) return;
+      var s16 = new Int16Array(pcm, 0, n);
       var buf = ctx.createBuffer(1, n, BOT_RATE);
       var ch = buf.getChannelData(0);
-      // Raw copy for the avatar (its playback clock drives the lip-sync);
-      // only while her voice is open, so a muted Manglara stays idle.
-      var raw = micOn && avatarReady ? new Uint8Array(n * 2) : null;
-      for (var i = 0; i < n; i++) {
-        var lo = bin.charCodeAt(i * 2);
-        var hi = bin.charCodeAt(i * 2 + 1);
-        if (raw) {
-          raw[i * 2] = lo;
-          raw[i * 2 + 1] = hi;
-        }
-        var v = (hi << 8) | lo;
-        if (v >= 32768) v -= 65536;
-        ch[i] = v / 32768;
+      for (var i = 0; i < n; i++) ch[i] = s16[i] / 32768;
+      // Same bytes to the avatar (its playback clock drives the lip-sync),
+      // transferred rather than copied; only while her voice is open, so a
+      // muted Manglara stays idle.
+      if (micOn && avatarReady) {
+        var raw = pcm.byteLength === n * 2 ? pcm : pcm.slice(0, n * 2);
+        postToAvatar({ type: "pcm", data: raw }, [raw]);
       }
-      if (raw) postToAvatar({ type: "pcm", data: raw.buffer }, [raw.buffer]);
       var src = ctx.createBufferSource();
       src.buffer = buf;
       src.connect(micGate);
@@ -373,6 +418,8 @@
 
   function setCam(on) {
     camOn = !!on;
+    // Camera off: the avatar renders at a trickle instead of full rate.
+    postToAvatar({ type: "cam", enabled: camOn });
     for (var i = 0; i < handedVideo.length; i++) {
       try {
         handedVideo[i].enabled = camOn;
@@ -453,39 +500,42 @@
 
   /* ---------- remote audio tee ---------- */
   var workletReady = null;
+  // Remote audio is only captured while the backend listens (brain on):
+  // asleep, nobody consumes it, so the worklet idles and nothing is sent.
+  var listenOn = false;
+  var teeNode = null;
+  function setListen(on) {
+    listenOn = !!on;
+    if (teeNode) {
+      try {
+        teeNode.port.postMessage({ on: listenOn });
+      } catch (_) {}
+    }
+  }
   function ensureWorklet(ctx) {
     if (workletReady) return workletReady;
+    // 16 kHz mono Int16 in 40 ms frames, written into a preallocated buffer
+    // (no per-sample array push/splice on the audio thread).
     var code =
-      "const R=16000;class Tee extends AudioWorkletProcessor{" +
-      "buf=[];acc=0;" +
-      "process(i){const ch=i[0];if(!ch||!ch.length)return true;" +
-      "const r=R/sampleRate;let m=ch[0];" +
-      "if(ch.length>1){m=new Float32Array(ch[0].length);" +
-      "for(let s=0;s<ch[0].length;s++){let a=0;" +
-      "for(let c=0;c<ch.length;c++)a+=ch[c][s];m[s]=a/ch.length;}}" +
-      "for(let s=0;s<m.length;s++){this.acc+=r;" +
-      "if(this.acc>=1){this.acc-=1;" +
-      "const v=Math.max(-1,Math.min(1,m[s]));" +
-      "this.buf.push(v<0?Math.round(32768*v):Math.round(32767*v));}}" +
-      "while(this.buf.length>=480){" +
-      "const o=this.buf.splice(0,480);" +
-      "const b=new Int16Array(o);" +
-      "this.port.postMessage(b.buffer,[b.buffer]);}" +
+      "const R=16000,N=640;class Tee extends AudioWorkletProcessor{" +
+      "constructor(){super();this.on=false;this.acc=0;this.k=0;" +
+      "this.out=new Int16Array(N);" +
+      "this.port.onmessage=(e)=>{this.on=!!(e.data&&e.data.on);" +
+      "if(!this.on){this.k=0;this.acc=0;}};}" +
+      "process(i){if(!this.on)return true;const ch=i[0];" +
+      "if(!ch||!ch.length)return true;" +
+      "const r=R/sampleRate,C=ch.length,L=ch[0].length;" +
+      "for(let s=0;s<L;s++){this.acc+=r;if(this.acc<1)continue;this.acc-=1;" +
+      "let v=ch[0][s];if(C>1){for(let c=1;c<C;c++)v+=ch[c][s];v/=C;}" +
+      "v=v<-1?-1:v>1?1:v;" +
+      "this.out[this.k++]=v<0?Math.round(32768*v):Math.round(32767*v);" +
+      "if(this.k===N){this.port.postMessage(this.out.buffer,[this.out.buffer]);" +
+      "this.out=new Int16Array(N);this.k=0;}}" +
       "return true;}}" +
       "registerProcessor('manglara-tee',Tee);";
     var url = URL.createObjectURL(new Blob([code], { type: "application/javascript" }));
     workletReady = ctx.audioWorklet.addModule(url);
     return workletReady;
-  }
-
-  function b64encode(buf) {
-    var bytes = new Uint8Array(buf);
-    var s = "";
-    var K = 0x8000;
-    for (var i = 0; i < bytes.length; i += K) {
-      s += String.fromCharCode.apply(null, bytes.subarray(i, i + K));
-    }
-    return btoa(s);
   }
 
   var teedTracks = {};
@@ -540,9 +590,11 @@
                 if (av > pk) pk = av;
               }
               teeStats.peak = Math.max(pk, Math.round((teeStats.peak || 0) * 0.98));
-              report({ type: "remote_pcm", data: b64encode(ev.data) });
+              if (listenOn) sendBinary(ev.data);
             };
             teeMixer.connect(node);
+            teeNode = node;
+            setListen(listenOn);
           }
           var src = ctx.createMediaStreamSource(new MediaStream([track]));
           src.connect(teeMixer);
@@ -681,25 +733,30 @@
   }
 
   /* ---------- meeting state polling (selectors from recipe) ---------- */
+  // innerText forces a layout and serializes the whole page: read it at most
+  // once per poll instead of once per text candidate.
+  var pollText = null;
+  function bodyText() {
+    if (pollText === null) {
+      pollText = (document.body && document.body.innerText) || "";
+    }
+    return pollText;
+  }
+
   function anyMatch(list) {
     list = list || [];
     for (var i = 0; i < list.length; i++) {
       var m = list[i] || {};
       try {
         if (m.selector && document.querySelector(m.selector)) return true;
-        if (
-          m.text &&
-          document.body &&
-          document.body.innerText &&
-          document.body.innerText.indexOf(m.text) >= 0
-        )
-          return true;
+        if (m.text && bodyText().indexOf(m.text) >= 0) return true;
       } catch (_) {}
     }
     return false;
   }
 
   function pollState() {
+    pollText = null;
     var sel = window.__MEETING_SELECTORS__ || {};
     var state = "unknown";
     if (anyMatch(sel.left)) state = "left";
@@ -712,7 +769,8 @@
     }
   }
   pollState.last = "unknown";
-  setInterval(pollState, 2000);
+  // Backup signal only (the backend polls the recipe every 2 s), so slower.
+  setInterval(pollState, 4000);
 
   /* ---------- control messages from backend ---------- */
   function onControl(msg) {
@@ -726,6 +784,9 @@
         break;
       case "set_cam":
         setCam(msg.enabled);
+        break;
+      case "set_listen":
+        setListen(msg.enabled);
         break;
       case "flush":
         flushBotAudio();
@@ -782,6 +843,9 @@
         audioContext: actx ? actx.state : "none",
         micOn: micOn,
         camOn: camOn,
+        listenOn: listenOn,
+        // Bot voice scheduled but not yet played.
+        botQueuedMs: actx ? Math.max(0, Math.round((playCursor - actx.currentTime) * 1000)) : 0,
         avatarReady: avatarReady,
         avatarFrameAgeMs: lastAvatarFrameAt ? Date.now() - lastAvatarFrameAt : null,
         wsOpen: !!(ws && ws.readyState === 1),

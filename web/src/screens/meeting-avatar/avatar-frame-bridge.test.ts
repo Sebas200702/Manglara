@@ -19,6 +19,11 @@ describe("parseBridgeMessage", () => {
     expect(parseBridgeMessage({ __manglara: "bridge", type: "state", state: "listening" })).toEqual(
       { type: "state", state: "listening" }
     );
+    expect(parseBridgeMessage({ __manglara: "bridge", type: "cam", enabled: false })).toEqual({
+      type: "cam",
+      enabled: false,
+    });
+    expect(parseBridgeMessage({ __manglara: "bridge", type: "ack" })).toEqual({ type: "ack" });
   });
 
   test("ignores messages from anything but the bridge", () => {
@@ -32,6 +37,7 @@ describe("parseBridgeMessage", () => {
     expect(parseBridgeMessage({ __manglara: "bridge", type: "pcm", data: "AAAA" })).toBeNull();
     expect(parseBridgeMessage({ __manglara: "bridge", type: "lip_text", text: 3 })).toBeNull();
     expect(parseBridgeMessage({ __manglara: "bridge", type: "state", state: "dancing" })).toBeNull();
+    expect(parseBridgeMessage({ __manglara: "bridge", type: "cam", enabled: "no" })).toBeNull();
     expect(parseBridgeMessage({ __manglara: "bridge", type: "unknown" })).toBeNull();
   });
 });

@@ -29,8 +29,13 @@ class GeminiLiveClient:
         # Off for meetings: third parties speak there, so their words (and
         # Manglara's answers) stay out of the server logs.
         self.log_transcripts = True
+        # Latest session-resumption handle (only sent when the config asks for
+        # `session_resumption`): reconnecting with it keeps the conversation.
+        self.resumption_handle: str | None = None
 
-    async def connect(self, system_prompt: str | None = None):
+    async def connect(
+        self, system_prompt: str | None = None, extra_config: dict | None = None
+    ):
         config = {
             "response_modalities": ["AUDIO"],
             "input_audio_transcription": {},
@@ -45,6 +50,7 @@ class GeminiLiveClient:
             "system_instruction": {
                 "parts": [{"text": system_prompt or SYSTEM_PROMPT}]
             },
+            **(extra_config or {}),
         }
 
         self._ctx = self.client.aio.live.connect(
@@ -103,6 +109,14 @@ class GeminiLiveClient:
                     "yes" if response.data else "no",
                     "yes" if response.setup_complete else "no",
                 )
+
+                upd = getattr(response, "session_resumption_update", None)
+                if upd and getattr(upd, "resumable", False) and upd.new_handle:
+                    self.resumption_handle = upd.new_handle
+
+                go_away = getattr(response, "go_away", None)
+                if go_away:
+                    logger.info("[gemini] go_away (time_left=%s)", go_away.time_left)
 
                 sc = response.server_content
 

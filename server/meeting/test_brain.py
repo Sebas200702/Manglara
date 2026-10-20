@@ -35,9 +35,12 @@ class FakeGemini:
         self.turn_complete_callback = None
         self.interrupt_callback = None
         self.on_user_turn_complete = None
+        self.config = None
+        self.resumption_handle = None
 
-    async def connect(self, system_prompt=None):
+    async def connect(self, system_prompt=None, extra_config=None):
         self.prompt = system_prompt
+        self.config = extra_config or {}
 
     async def send_text(self, text):
         self.texts.append(text)
@@ -91,15 +94,20 @@ async def main():
     bridge._page_ws = object()  # WS interno "conectado" (send capturado abajo)
 
     sent: list[dict] = []
+    audio_out: list[bytes] = []
     transcripts: list[tuple[str, str]] = []
 
     async def capture(msg):
         sent.append(msg)
 
+    async def capture_audio(pcm):
+        audio_out.append(pcm)
+
     async def on_transcript(role, text):
         transcripts.append((role, text))
 
     bridge._send_control = capture
+    bridge._send_audio = capture_audio
     bridge.on_transcript = on_transcript
 
     print("brain_start fuera de la reunión")
@@ -117,6 +125,14 @@ async def main():
     check(session.media.mic_enabled and recipe.mic_calls[-1] is True, "abre el mic")
     check(g.texts == [], "no habla primero (sin presentación automática)")
     check("MODO REUNIÓN" in (g.prompt or ""), "usa el prompt de reunión")
+    check("context_window_compression" in g.config, "sesión larga (compresión)")
+    check(g.config.get("session_resumption") == {}, "pide handles de reanudación")
+    check({"type": "set_listen", "enabled": True} in sent, "la página empieza a escuchar")
+
+    print("audio remoto binario -> Gemini")
+    await bridge._on_remote_pcm(b"\x00\x00" * 640)
+    check(len(g.audio) == 1, "reenvía PCM binario")
+    g.audio.clear()
 
     print("audio remoto -> Gemini")
     await bridge._on_page_message({"type": "remote_pcm", "data": "AAAA"})
@@ -125,7 +141,7 @@ async def main():
     print("voz de Manglara + half-duplex")
     await g.out.put(b"\x00\x00" * 2400)  # 100 ms de audio a 24 kHz
     await asyncio.sleep(0.05)
-    check(any(m["type"] == "bot_pcm" for m in sent), "bot_pcm hacia la página")
+    check(audio_out and len(audio_out[0]) == 4800, "voz binaria hacia la página")
     await bridge._on_page_message({"type": "remote_pcm", "data": "AAAA"})
     check(len(g.audio) == 1, "suprime entrada mientras habla")
 
@@ -142,12 +158,17 @@ async def main():
     await bridge._on_page_message({"type": "remote_pcm", "data": "AAAA"})
     check(len(g.audio) == 2, "reabre entrada tras flush")
 
-    print("reconexión automática")
+    print("reconexión automática (reanuda la conversación)")
+    g.resumption_handle = "h-123"
     await g.out.put(RuntimeError("session expired"))
-    await asyncio.sleep(1.3)
+    await asyncio.sleep(0.5)
     check(len(FakeGemini.instances) == 2, "abre una sesión nueva")
     g2 = FakeGemini.instances[-1]
     check(g2.texts == [], "no se vuelve a presentar")
+    check(
+        g2.config.get("session_resumption") == {"handle": "h-123"},
+        "reconecta con el handle",
+    )
     check(session.brain == "active", "sigue activa")
 
     print("brain_stop")
@@ -155,6 +176,10 @@ async def main():
     check(session.brain == "off", "brain=off")
     check(g2.closed, "cierra Gemini")
     check(not session.media.mic_enabled, "silencia")
+    check(
+        [m for m in sent if m["type"] == "set_listen"][-1]["enabled"] is False,
+        "la página deja de escuchar",
+    )
 
     print("re-start repetido")
     for _ in range(3):

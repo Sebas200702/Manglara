@@ -10,20 +10,37 @@
  *
  * Opened directly in a browser it renders the avatar with an FPS counter, to
  * check the render loop on its own.
+ *
+ * Cost control: this runs in the bot's browser next to the meeting app itself,
+ * so the frame rate follows what is on screen - full rate only while she
+ * speaks (lip-sync), a calm rate while idle/listening, a trickle with the
+ * camera off - and each rendered frame is copied once, straight from the
+ * render loop.
  */
 import type { AvatarState } from "@manglara/shared";
 import { useEffect, useRef, useState } from "react";
 import { AvatarController } from "../../components/avatar/avatar-controller";
 import {
   announceReady,
+  createFramePump,
   isEmbedded,
   parseBridgeMessage,
-  startFramePump,
 } from "./avatar-frame-bridge";
 
 export const AVATAR_FRAME_WIDTH = 640;
 export const AVATAR_FRAME_HEIGHT = 480;
-const FRAME_FPS = 24;
+/**
+ * While speaking: readable lip-sync. TalkingHead only renders on a rAF tick at
+ * least 1000/fps ms after the last one, so at 60 Hz this delivers ~23 fps.
+ */
+const FPS_SPEAKING = 30;
+/**
+ * Idle / listening / thinking: breathing, blinks and glances only (~10 fps).
+ * Most of a meeting is spent here, so this rate sets most of the cost.
+ */
+const FPS_IDLE = 10;
+/** Camera off in the meeting: nobody sees the frames, keep the scene ticking. */
+const FPS_CAM_OFF = 2;
 /** Same mangrove loop as the 1:1 call's backdrop. */
 const BACKGROUND_SRC = "/mangrove-loop.mp4";
 
@@ -38,10 +55,12 @@ export function MeetingAvatarPage() {
     if (!node) return;
 
     let disposed = false;
-    let stopPump: (() => void) | null = null;
+    let stopFrames: (() => void) | null = null;
     let streamReady: Promise<void> | null = null;
     // Brain state from the parent; "speaking" comes from real playback instead.
     let baseState: AvatarState = "idle";
+    let speaking = false;
+    let camEnabled = true;
     let frames = 0;
     let lastFpsAt = performance.now();
     let fpsRaf = 0;
@@ -54,32 +73,50 @@ export function MeetingAvatarPage() {
     background.preload = "auto";
     void background.play().catch(() => {});
 
-    const controller = new AvatarController(node, {
-      onReady: () => {
-        if (disposed) return;
-        setStatus("");
-        const canvas = node.querySelector("canvas");
-        if (canvas) {
-          stopPump = startFramePump(
-            canvas,
-            FRAME_FPS,
-            () => {
-              frames += 1;
-            },
-            background,
-            { width: AVATAR_FRAME_WIDTH, height: AVATAR_FRAME_HEIGHT }
-          );
-        }
-        announceReady();
-      },
-      onSpeakingChange: (speaking) => {
-        controller.setState(speaking ? "speaking" : baseState);
-      },
-      onError: (err) => {
-        console.error("[meeting-avatar]", err);
-        setStatus("No se pudo cargar el avatar");
+    const pump = createFramePump({
+      background,
+      size: { width: AVATAR_FRAME_WIDTH, height: AVATAR_FRAME_HEIGHT },
+      onFrame: () => {
+        frames += 1;
       },
     });
+
+    const applyFrameRate = () => {
+      controller.setFrameRate(!camEnabled ? FPS_CAM_OFF : speaking ? FPS_SPEAKING : FPS_IDLE);
+    };
+
+    const controller = new AvatarController(
+      node,
+      {
+        onReady: () => {
+          if (disposed) return;
+          setStatus("");
+          if (embedded) {
+            // Nobody looks at the iframe: frames leave through the pump. A
+            // hidden canvas still renders but is not composited into the
+            // meeting page on every frame (measured: -5-10 % CPU).
+            const canvas = node.querySelector("canvas");
+            if (canvas) canvas.style.visibility = "hidden";
+          }
+          stopFrames = controller.onFrameRendered((canvas) => {
+            if (camEnabled) pump.push(canvas);
+          });
+          applyFrameRate();
+          announceReady();
+        },
+        onSpeakingChange: (isSpeaking) => {
+          speaking = isSpeaking;
+          applyFrameRate();
+          controller.setState(isSpeaking ? "speaking" : baseState);
+        },
+        onError: (err) => {
+          console.error("[meeting-avatar]", err);
+          setStatus("No se pudo cargar el avatar");
+        },
+      },
+      // Same size whatever the screen scaling.
+      { fps: FPS_IDLE, ignoreDevicePixelRatio: true }
+    );
     void controller.init().catch(() => {});
 
     // Streaming needs an AudioContext; the bot browser allows autoplay, a
@@ -99,6 +136,13 @@ export function MeetingAvatarPage() {
       const msg = parseBridgeMessage(ev.data);
       if (!msg || !controller.isReady) return;
       switch (msg.type) {
+        case "ack":
+          pump.ack();
+          break;
+        case "cam":
+          camEnabled = msg.enabled;
+          applyFrameRate();
+          break;
         case "pcm":
           void ensureStream()
             .then(() => controller.feedAudio(msg.data))
@@ -140,7 +184,8 @@ export function MeetingAvatarPage() {
       disposed = true;
       window.removeEventListener("message", onMessage);
       cancelAnimationFrame(fpsRaf);
-      stopPump?.();
+      stopFrames?.();
+      pump.stop();
       background.pause();
       background.removeAttribute("src");
       controller.dispose();

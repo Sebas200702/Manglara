@@ -10,7 +10,10 @@ el audio remoto NO se envía a Gemini. Así su propia voz, si algún participant
 la devuelve por altavoces, no se convierte en un turno nuevo.
 
 Las sesiones de Gemini Live tienen duración limitada; si la sesión cae con el
-cerebro encendido se reconecta sola (sin volver a presentarse).
+cerebro encendido se reconecta sola (sin volver a presentarse). Con compresión
+de contexto la sesión no muere a los ~15 min de audio, y con el handle de
+reanudación la reconexión (Gemini corta la conexión cada ~10 min) conserva la
+conversación en vez de empezar de cero.
 """
 
 import asyncio
@@ -18,6 +21,7 @@ import logging
 import time
 from typing import Awaitable, Callable
 
+from config import MEETING_VAD_SILENCE_MS
 from db import list_active_documents
 from gemini_client import GeminiLiveClient
 from pdf.digest import build_knowledge_context
@@ -35,6 +39,24 @@ MIC_REOPEN_GUARD_S = 0.5
 # rendirse y apagar el cerebro con error.
 MAX_FAST_FAILURES = 3
 RECONNECT_WINDOW_S = 30.0
+
+
+def _live_config() -> dict:
+    """Ajustes de la sesión Live propios de la reunión (larga y multi-persona)."""
+    config: dict = {
+        # Sin esto el contexto crece sin tope (audio + RAG por turno) y la
+        # sesión de solo audio muere a los ~15 min: Manglara queda "trabada"
+        # mientras reconecta y olvida la conversación.
+        "context_window_compression": {"sliding_window": {}},
+    }
+    if MEETING_VAD_SILENCE_MS > 0:
+        config["realtime_input_config"] = {
+            "automatic_activity_detection": {
+                "end_of_speech_sensitivity": "END_SENSITIVITY_HIGH",
+                "silence_duration_ms": MEETING_VAD_SILENCE_MS,
+            }
+        }
+    return config
 
 
 class MeetingBrain:
@@ -58,6 +80,8 @@ class MeetingBrain:
         self._knowledge = ""
         # Instante (monotonic) en que termina de sonar el audio ya enviado.
         self._play_until = 0.0
+        # Handle de reanudación de la última sesión (None = empezar de cero).
+        self._resume_handle: str | None = None
 
     @property
     def active(self) -> bool:
@@ -82,6 +106,7 @@ class MeetingBrain:
                 pass
         await self._close_gemini()
         self._play_until = 0.0
+        self._resume_handle = None
 
     async def _load_knowledge(self) -> str:
         try:
@@ -100,13 +125,38 @@ class MeetingBrain:
         gemini.turn_complete_callback = self._on_turn_complete
         gemini.interrupt_callback = self._handle_interrupted
         gemini.on_user_turn_complete = self._run_retrieval
-        await gemini.connect(system_prompt=build_meeting_prompt(self._knowledge))
+        prompt = build_meeting_prompt(self._knowledge)
+        handle, self._resume_handle = self._resume_handle, None
+        config = _live_config()
+        if handle:
+            try:
+                await gemini.connect(
+                    system_prompt=prompt,
+                    extra_config={**config, "session_resumption": {"handle": handle}},
+                )
+                self._gemini = gemini
+                logger.info("[brain] sesión Gemini reanudada")
+                return
+            except Exception as e:
+                # Handle caducado o rechazado: sesión nueva, sin memoria previa.
+                logger.warning("[brain] reanudación falló, sesión nueva: %s", e)
+                try:
+                    await gemini.close()
+                except Exception:
+                    pass
+        await gemini.connect(
+            system_prompt=prompt,
+            extra_config={**config, "session_resumption": {}},
+        )
         self._gemini = gemini
         logger.info("[brain] sesión Gemini abierta")
 
     async def _close_gemini(self):
         gemini, self._gemini = self._gemini, None
         if gemini:
+            handle = getattr(gemini, "resumption_handle", None)
+            if handle and not self._stopping:
+                self._resume_handle = handle
             try:
                 await gemini.close()
             except Exception as e:
@@ -148,7 +198,10 @@ class MeetingBrain:
                 await self._fatal("La sesión con Gemini se cayó repetidamente")
                 return
             logger.info("[brain] reconectando sesión Gemini")
-            await asyncio.sleep(1)
+            # Corte normal (go_away / fin de conexión): reconectar ya, cada
+            # segundo es un segundo en que Manglara no escucha. Fallos seguidos
+            # sí esperan para no martillar la API.
+            await asyncio.sleep(0.1 if fast_failures <= 1 else fast_failures)
 
     async def _fatal(self, message: str):
         self._stopping = True

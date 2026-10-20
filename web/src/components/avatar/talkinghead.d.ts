@@ -91,6 +91,10 @@ declare module "@met4citizen/talkinghead" {
     gestureTemplates: Record<string, Record<string, unknown>>;
     /** Per-language lip-sync processors; we register one statically at load. */
     lipsync: Record<string, unknown>;
+    /** three.js WebGLRenderer; `render` is called once per animation frame. */
+    renderer: { render(scene: unknown, camera: unknown): void; domElement: HTMLCanvasElement };
+    /** ms between rendered frames (1000 / opt.modelFPS), read every frame. */
+    animFrameDur: number;
 
     showAvatar(
       avatar: ShowAvatarOptions,

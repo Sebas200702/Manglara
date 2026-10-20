@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 BRIDGES: dict[str, "MeetingBridge"] = {}
 
 POLL_INTERVAL_S = 2.0
+# "¿Está sola?" relee el DOM entero de la reunión; con un timeout de minutos
+# basta mirarlo cada pocos polls (10 s) en vez de en cada uno.
+ALONE_CHECK_EVERY = 5
 # WS interno (página inyectada) caído más de esto -> 1 reintento -> error.
 WS_DEAD_S = 30.0
 
@@ -68,6 +71,7 @@ class MeetingBridge:
         self._ws_down_since: float | None = None
         self._ws_retried = False
         self._alone_since: float | None = None
+        self._polls = 0
         # Diagnóstico: audio de participantes recibido de la página.
         self.remote_pcm_bytes = 0
 
@@ -193,7 +197,12 @@ class MeetingBridge:
                 await self.leave(reason="ended")
                 return
 
-            if s.bridge == "in_meeting" and await self._alone_expired():
+            self._polls += 1
+            if (
+                s.bridge == "in_meeting"
+                and self._polls % ALONE_CHECK_EVERY == 0
+                and await self._alone_expired()
+            ):
                 logger.info("[meeting] sola en la reunión: saliendo")
                 await self.leave(reason="alone")
                 return
@@ -311,6 +320,7 @@ class MeetingBridge:
             self.brain = brain
             s.brain = "active"
             logger.info("[meeting] %s brain=active", s.id[:8])
+        await self._send_control({"type": "set_listen", "enabled": True})
         await self._send_control({"type": "avatar_state", "state": "listening"})
         await self._emit()
 
@@ -328,6 +338,9 @@ class MeetingBridge:
                 await brain.stop()
             s.brain = "off"
             logger.info("[meeting] %s brain=off", s.id[:8])
+        # Dormida nadie consume el audio de la reunión: la página deja de
+        # capturarlo y enviarlo.
+        await self._send_control({"type": "set_listen", "enabled": False})
         await self._send_control({"type": "flush"})
         await self._send_control({"type": "avatar_state", "state": "idle"})
         if self._closing or not self.browser.page:
@@ -362,6 +375,7 @@ class MeetingBridge:
         self.brain = None
         self.session.brain = "off"
         self.session.error = message
+        await self._send_control({"type": "set_listen", "enabled": False})
         await self._send_control({"type": "flush"})
         await self._send_control({"type": "avatar_state", "state": "idle"})
         await self.set_mic(False)
@@ -396,7 +410,18 @@ class MeetingBridge:
         self._ws_retried = False
         logger.info("[meeting] WS interno conectado")
         try:
-            async for raw in ws.iter_text():
+            while True:
+                frame = await ws.receive()
+                if frame["type"] == "websocket.disconnect":
+                    raise WebSocketDisconnect(frame.get("code", 1000))
+                # Binario = PCM remoto crudo (sin base64 ni JSON); texto = control.
+                data = frame.get("bytes")
+                if data is not None:
+                    await self._on_remote_pcm(data)
+                    continue
+                raw = frame.get("text")
+                if raw is None:
+                    continue
                 try:
                     msg = json.loads(raw)
                 except json.JSONDecodeError:
@@ -415,6 +440,7 @@ class MeetingBridge:
     async def _on_page_message(self, msg: dict):
         mtype = msg.get("type")
         if mtype == "remote_pcm":
+            # Formato anterior (base64 en JSON); la página actual manda binario.
             if not msg.get("data"):
                 return
             try:
@@ -422,14 +448,7 @@ class MeetingBridge:
             except Exception as e:
                 logger.warning("[meeting] pcm inválido: %s", e)
                 return
-            self.remote_pcm_bytes += len(pcm)
-            if self.brain:
-                await self.brain.feed_remote_pcm(pcm)
-            if self.on_remote_pcm:
-                try:
-                    await self.on_remote_pcm(pcm)
-                except Exception as e:
-                    logger.warning("[meeting] on_remote_pcm falló: %s", e)
+            await self._on_remote_pcm(pcm)
         elif mtype == "meeting_state":
             state = msg.get("state")
             s = self.session
@@ -444,6 +463,9 @@ class MeetingBridge:
             m = self.session.media
             await self._send_control({"type": "set_mic", "enabled": m.mic_enabled})
             await self._send_control({"type": "set_cam", "enabled": m.cam_enabled})
+            await self._send_control(
+                {"type": "set_listen", "enabled": self.brain is not None}
+            )
             await self._send_control(
                 {
                     "type": "avatar_state",
@@ -465,6 +487,18 @@ class MeetingBridge:
         elif mtype == "gum_called":
             logger.debug("[meeting:page] gum_called")
 
+    async def _on_remote_pcm(self, pcm: bytes):
+        if not pcm:
+            return
+        self.remote_pcm_bytes += len(pcm)
+        if self.brain:
+            await self.brain.feed_remote_pcm(pcm)
+        if self.on_remote_pcm:
+            try:
+                await self.on_remote_pcm(pcm)
+            except Exception as e:
+                logger.warning("[meeting] on_remote_pcm falló: %s", e)
+
     async def _send_control(self, msg: dict):
         if not self._page_ws:
             return
@@ -475,10 +509,17 @@ class MeetingBridge:
 
     # -- salida hacia Gemini (Fase 2) ------------------------------------------
     async def send_bot_pcm(self, pcm: bytes):
+        # Binario: ni base64 (+33 % de bytes) ni JSON, y la página lo convierte
+        # a Float32 sin decodificar texto.
         if not pcm or not self._page_ws:
             return
-        b64 = base64.b64encode(pcm).decode()
-        await self._send_control({"type": "bot_pcm", "data": b64})
+        await self._send_audio(pcm)
+
+    async def _send_audio(self, pcm: bytes):
+        try:
+            await self._page_ws.send_bytes(pcm)
+        except Exception as e:
+            logger.warning("[meeting] audio no enviado: %s", e)
 
     def get_debug_info(self) -> dict[str, Any]:
         return {

@@ -137,6 +137,13 @@ export interface AvatarControllerCallbacks {
   onError?: (error: unknown) => void;
 }
 
+export interface AvatarControllerOptions {
+  /** Render rate (TalkingHead modelFPS). Default 30. */
+  fps?: number;
+  /** Render at the node's CSS size whatever the devicePixelRatio (video capture). */
+  ignoreDevicePixelRatio?: boolean;
+}
+
 /**
  * Bridges the app to the met4citizen avatar stack:
  *  - TalkingHead renders the RPM avatar, plays the streamed PCM and runs the
@@ -243,9 +250,13 @@ export class AvatarController {
    *  returning to zero is why the capture showed audio_entregado=0 throughout. */
   private resetCounts: Record<string, number> = {};
 
+  /** Called with the WebGL canvas right after each render (see onFrameRendered). */
+  private frameListeners = new Set<(canvas: HTMLCanvasElement) => void>();
+
   constructor(
     private node: HTMLElement,
-    private callbacks: AvatarControllerCallbacks = {}
+    private callbacks: AvatarControllerCallbacks = {},
+    private options: AvatarControllerOptions = {}
   ) {}
 
   get isReady(): boolean {
@@ -273,9 +284,14 @@ export class AvatarController {
       // talkinghead.mjs) - all facial, so it costs nothing on the body rig and is
       // the expressiveness the arm gestures can't safely provide on this mesh.
       avatarMood: DEFAULT_MOOD,
-      modelFPS: 30,
+      modelFPS: this.options.fps ?? 30,
+      // TalkingHead multiplies this by devicePixelRatio.
+      modelPixelRatio: this.options.ignoreDevicePixelRatio
+        ? 1 / (window.devicePixelRatio || 1)
+        : 1,
     });
     this.head = head;
+    this.hookRenderer(head);
     // Register the statically-bundled lip-sync processor (see import note). This
     // replaces TalkingHead's dynamic-import path so it works in the prod bundle.
     head.lipsync = { en: new LipsyncEn() };
@@ -969,8 +985,51 @@ export class AvatarController {
     }
   }
 
+  /**
+   * Change the render rate on the fly. TalkingHead reads `animFrameDur` every
+   * animation frame, and the lip-sync clock is measured rather than integrated
+   * (see `syncPlayedMs`), so lowering it costs smoothness, never sync.
+   */
+  setFrameRate(fps: number): void {
+    const head = this.head;
+    if (!head || !(fps > 0)) return;
+    head.opt.modelFPS = fps;
+    head.animFrameDur = 1000 / fps;
+  }
+
+  /**
+   * Run `listener` with the WebGL canvas right after every render, in the same
+   * task, while the drawing buffer still holds that frame (TalkingHead does not
+   * set preserveDrawingBuffer, so outside this window the canvas may read as
+   * cleared). Lets a video capture copy each frame exactly once, at the render
+   * rate. Returns the unsubscribe function.
+   */
+  onFrameRendered(listener: (canvas: HTMLCanvasElement) => void): () => void {
+    this.frameListeners.add(listener);
+    return () => {
+      this.frameListeners.delete(listener);
+    };
+  }
+
+  private hookRenderer(head: TalkingHead): void {
+    const renderer = head.renderer;
+    if (!renderer) return;
+    const render = renderer.render.bind(renderer);
+    renderer.render = (scene, camera) => {
+      render(scene, camera);
+      for (const listener of this.frameListeners) {
+        try {
+          listener(renderer.domElement);
+        } catch {
+          // a broken listener must never stop the render loop
+        }
+      }
+    };
+  }
+
   dispose(): void {
     this.disposed = true;
+    this.frameListeners.clear();
     this.stopBodyLanguage();
     this.stopStream();
     try {

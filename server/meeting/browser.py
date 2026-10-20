@@ -166,6 +166,12 @@ class MeetingBrowser:
                     args=args,
                     executable_path=MEETING_CHROMIUM_EXECUTABLE or None,
                     viewport={"width": 1280, "height": 720},
+                    # 1:1 aunque Windows escale la pantalla (MEETING_HEADLESS=false):
+                    # a 150 % el avatar y la reunión se renderizarían 2,25x píxeles.
+                    device_scale_factor=1,
+                    # La UI del proveedor apaga transiciones y animaciones CSS
+                    # que nadie ve en el bot pero cuestan render en cada frame.
+                    reduced_motion="reduce",
                     locale="es-ES",
                     # La CSP del proveedor bloquearía el WS interno a
                     # 127.0.0.1 (connect-src) y el iframe del avatar (frame-src).
@@ -180,6 +186,8 @@ class MeetingBrowser:
             )
             self._context = await self._browser.new_context(
                 viewport={"width": 1280, "height": 720},
+                device_scale_factor=1,
+                reduced_motion="reduce",
                 locale="es-ES",
                 bypass_csp=True,
             )

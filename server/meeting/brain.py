@@ -24,7 +24,6 @@ from pdf.digest import build_knowledge_context
 from pdf.retrieval import retrieve_context
 from prompt import CONTEXT_NOTE
 from .prompt import build_meeting_prompt
-from .wake_gate import WakeGate
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +35,6 @@ MIC_REOPEN_GUARD_S = 0.5
 # rendirse y apagar el cerebro con error.
 MAX_FAST_FAILURES = 3
 RECONNECT_WINDOW_S = 30.0
-
-
-def _new_wake_gate() -> WakeGate:
-    return WakeGate()
 
 
 class MeetingBrain:
@@ -63,7 +58,6 @@ class MeetingBrain:
         self._knowledge = ""
         # Instante (monotonic) en que termina de sonar el audio ya enviado.
         self._play_until = 0.0
-        self._wake_gate: WakeGate | None = None
 
     @property
     def active(self) -> bool:
@@ -72,7 +66,6 @@ class MeetingBrain:
     # -- ciclo de vida ---------------------------------------------------------
     async def start(self):
         self._stopping = False
-        self._wake_gate = _new_wake_gate()
         self._knowledge = await self._load_knowledge()
         # Sin presentación automática: las personas tienen la primera palabra.
         await self._connect()
@@ -89,7 +82,6 @@ class MeetingBrain:
                 pass
         await self._close_gemini()
         self._play_until = 0.0
-        self._wake_gate = None
 
     async def _load_knowledge(self) -> str:
         try:
@@ -102,8 +94,6 @@ class MeetingBrain:
             return ""
 
     async def _connect(self):
-        if self._wake_gate:
-            self._wake_gate.reset()
         gemini = GeminiLiveClient()
         gemini.log_transcripts = False  # privacidad de los participantes
         gemini.transcript_callback = self._handle_transcript
@@ -175,37 +165,12 @@ class MeetingBrain:
 
     async def feed_remote_pcm(self, pcm: bytes):
         gemini = self._gemini
-        gate = self._wake_gate
-        if not gemini or not gate or self._stopping:
+        if not gemini or self._stopping or self._input_suppressed():
             return
-        if self._input_suppressed():
-            gate.reset()
-            return
-        chunks, closed = gate.feed(pcm)
         try:
-            for chunk in chunks:
-                await gemini.send_audio_pcm16_16k(chunk)
-            if closed:
-                # Sin más audio el VAD de Gemini no cierra el turno y no
-                # responde: avisar que la intervención terminó.
-                await gemini.end_audio_stream()
+            await gemini.send_audio_pcm16_16k(pcm)
         except Exception as e:
             logger.debug("[brain] audio a Gemini no enviado: %s", e)
-
-    async def wake(self):
-        """El navegador oyó el nombre: abrir el paso con el preaudio."""
-        gemini = self._gemini
-        gate = self._wake_gate
-        if not gemini or not gate or self._stopping or self._input_suppressed():
-            return
-        buffered = gate.wake()
-        if not buffered:
-            return
-        logger.info("[brain] nombre oido: se envian %d bytes de preaudio", len(buffered))
-        try:
-            await gemini.send_audio_pcm16_16k(buffered)
-        except Exception as e:
-            logger.debug("[brain] preaudio a Gemini no enviado: %s", e)
 
     # -- salida: voz y eventos de Manglara ------------------------------------
     async def _emit_audio(self, chunk: bytes):

@@ -35,7 +35,6 @@ Repetir por proveedor (Teams, Zoom, Meet):
 - [ ] En la reunión se ve a Manglara dormida (avatar idle, muda)
 - [ ] Pulsar **▶ Iniciar Manglara Meeting Live** → estado activa
 - [ ] Con una 2ª persona en la reunión (otro dispositivo): habla → Manglara responde audible
-- [ ] Sin decir «Manglara», conversar y comprobar que no responde; decir «Manglara» y hacer una pregunta → responde; tras una pausa, una nueva pregunta sin su nombre no la activa
 - [ ] **Silenciar** desde la web: su voz se corta pero sigue escuchando (responde al reactivar)
 - [ ] **Apagar interacción**: deja de responder, sigue en la reunión; **▶** la reactiva
 - [ ] **Desconectar**: sale de la reunión y libera todo

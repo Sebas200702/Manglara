@@ -232,10 +232,7 @@
     // Inside the viewport (Chrome throttles offscreen cross-origin iframes)
     // but invisible and click-through.
     f.style.cssText =
-      "position:fixed;left:0;bottom:0;width:" +
-      CAM_W +
-      "px;height:" +
-      CAM_H +
+      "position:fixed;left:0;bottom:0;width:" + CAM_W + "px;height:" + CAM_H +
       "px;border:0;opacity:0.01;pointer-events:none;z-index:-2147483647;";
     // Outside <body>: provider SPAs re-render body and would drop it.
     root.appendChild(f);
@@ -447,8 +444,7 @@
       var needAudio = !!constraints.audio;
       var needVideo = !!constraints.video;
       report({ type: "gum_called", audio: needAudio, video: needVideo });
-      if (!needAudio && !needVideo)
-        return Promise.reject(new Error("no tracks"));
+      if (!needAudio && !needVideo) return Promise.reject(new Error("no tracks"));
       return Promise.resolve(syntheticStream(needAudio, needVideo));
     };
   } catch (err) {
@@ -477,9 +473,7 @@
       "this.port.postMessage(b.buffer,[b.buffer]);}" +
       "return true;}}" +
       "registerProcessor('manglara-tee',Tee);";
-    var url = URL.createObjectURL(
-      new Blob([code], { type: "application/javascript" }),
-    );
+    var url = URL.createObjectURL(new Blob([code], { type: "application/javascript" }));
     workletReady = ctx.audioWorklet.addModule(url);
     return workletReady;
   }
@@ -522,8 +516,7 @@
     teedTracks[track.id] = true;
     teeTrackList.push(track);
     teeStats.tracks++;
-    teeStats.sources[source || "?"] =
-      (teeStats.sources[source || "?"] || 0) + 1;
+    teeStats.sources[source || "?"] = (teeStats.sources[source || "?"] || 0) + 1;
     report({ type: "tee", source: source || "?", tracks: teeStats.tracks });
     attachSink(track);
     try {
@@ -546,174 +539,20 @@
                 var av = s16[q] < 0 ? -s16[q] : s16[q];
                 if (av > pk) pk = av;
               }
-              teeStats.peak = Math.max(
-                pk,
-                Math.round((teeStats.peak || 0) * 0.98),
-              );
+              teeStats.peak = Math.max(pk, Math.round((teeStats.peak || 0) * 0.98));
               report({ type: "remote_pcm", data: b64encode(ev.data) });
             };
             teeMixer.connect(node);
-            var wakeDest = ctx.createMediaStreamDestination();
-            teeMixer.connect(wakeDest);
-            wakeTrack = wakeDest.stream.getAudioTracks()[0];
-            startWake();
           }
           var src = ctx.createMediaStreamSource(new MediaStream([track]));
           src.connect(teeMixer);
         },
         function (err) {
           log("tee worklet failed: " + err);
-        },
+        }
       );
     } catch (err) {
       log("tee failed: " + err);
-    }
-  }
-
-  /* ---------- wake word: Web Speech API over the participants' mix ---------- */
-  // Recognition runs here (Chromium's cloud speech service) instead of on the
-  // backend: the server only gets a {type:"wake"} when the name is heard.
-  var WAKE_WORDS = CFG.wakeWords || [];
-  var wakeOn = false;
-  var wakeRec = null;
-  var wakeTrack = null;
-  var wakeFails = 0;
-
-  function wakeNorm(text) {
-    var plain = String(text || "")
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9]+/g, " ")
-      .trim();
-    return plain;
-  }
-
-  // Distancia de edicion acotada. El reconocedor no siempre devuelve el
-  // nombre tal cual ("manglar", "mangler", "manjlara"): con coincidencia
-  // exacta el nombre se pierde y el bot nunca wakea. Se permite 1 cambio
-  // (2 en palabras largas) para cubrir esas variantes sin abrir la puerta a
-  // falsos positivos ("manzana" esta a 5 cambios, no dispara).
-  function levenshtein(a, b, max) {
-    var prev = new Array(b.length + 1);
-    var cur = new Array(b.length + 1);
-    for (var j = 0; j <= b.length; j++) prev[j] = j;
-    for (var i = 1; i <= a.length; i++) {
-      cur[0] = i;
-      var best = i;
-      for (var k = 1; k <= b.length; k++) {
-        var cost = a[i - 1] === b[k - 1] ? 0 : 1;
-        var v = Math.min(prev[k] + 1, cur[k - 1] + 1, prev[k - 1] + cost);
-        cur[k] = v;
-        if (v < best) best = v;
-      }
-      if (best > max) return max + 1;
-      var tmp = prev;
-      prev = cur;
-      cur = tmp;
-    }
-    return prev[b.length];
-  }
-
-  function wakeNear(word, target) {
-    if (word === target) return true;
-    var shortLen = Math.min(word.length, target.length);
-    var longLen = Math.max(word.length, target.length);
-    if (shortLen < 5) return false;
-    if (longLen - shortLen > 2) return false;
-    var max = shortLen >= 6 ? 2 : 1;
-    return levenshtein(word, target, max) <= max;
-  }
-
-  function wakeHit(text) {
-    var plain = wakeNorm(text);
-    if (!plain) return false;
-    var words = plain.split(/\s+/);
-    var padded = " " + plain + " ";
-    for (var i = 0; i < WAKE_WORDS.length; i++) {
-      var target = (WAKE_WORDS[i] || "").trim();
-      if (!target) continue;
-      // Exacto y por palabra completa (sirve para nombres compuestos).
-      if (padded.indexOf(" " + target + " ") >= 0) return true;
-      // Tolerante: una palabra parecida cuenta como el nombre.
-      var targets = target.split(/\s+/);
-      for (var w = 0; w < words.length; w++) {
-        for (var t = 0; t < targets.length; t++) {
-          if (wakeNear(words[w], targets[t])) return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  function retryWake() {
-    // Chrome ends continuous sessions on its own; errors back off up to 30 s.
-    setTimeout(startWake, Math.min(30000, 250 * Math.pow(2, wakeFails)));
-  }
-
-  function startWake() {
-    if (!wakeOn || wakeRec || !wakeTrack || !WAKE_WORDS.length) return;
-    var C = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!C) {
-      report({ type: "wake_error", error: "SpeechRecognition no disponible" });
-      return;
-    }
-    var r = new C();
-    r.lang = "es-ES";
-    r.continuous = true;
-    r.interimResults = true;
-    r.maxAlternatives = 3;
-    var fired = {};
-    r.onresult = function (ev) {
-      for (var i = ev.resultIndex; i < ev.results.length; i++) {
-        if (fired[i]) continue;
-        var res = ev.results[i];
-        for (var a = 0; a < res.length; a++) {
-          if (wakeHit(res[a].transcript)) {
-            fired[i] = true;
-            wakeFails = 0;
-            report({ type: "wake" });
-            break;
-          }
-        }
-      }
-    };
-    r.onerror = function (ev) {
-      if (ev.error === "no-speech" || ev.error === "aborted") return;
-      wakeFails++;
-      report({ type: "wake_error", error: ev.error });
-    };
-    r.onend = function () {
-      if (wakeRec === r) wakeRec = null;
-      if (wakeOn) retryWake();
-    };
-    try {
-      r.start(wakeTrack);
-      wakeRec = r;
-      // El backend lo registra: asi se ve que el reconocedor esta vivo
-      // (sin esto, un wake que nunca llega no se distingue de uno que no
-      // se oye).
-      report({ type: "wake_state", state: "listening" });
-    } catch (err) {
-      wakeFails++;
-      report({ type: "wake_error", error: String(err) });
-      retryWake();
-    }
-  }
-
-  function setWakeListen(on) {
-    wakeOn = !!on;
-    if (wakeOn) {
-      startWake();
-    } else {
-      if (wakeRec) {
-        var r = wakeRec;
-        wakeRec = null;
-        try {
-          r.abort();
-        } catch (_) {}
-      }
-      report({ type: "wake_state", state: "stopped" });
     }
   }
 
@@ -769,13 +608,10 @@
       WrappedPC.prototype = OrigPC.prototype;
       Object.setPrototypeOf(WrappedPC, OrigPC);
       try {
-        Object.defineProperty(WrappedPC, "name", {
-          value: "RTCPeerConnection",
-        });
+        Object.defineProperty(WrappedPC, "name", { value: "RTCPeerConnection" });
       } catch (_) {}
       window.RTCPeerConnection = WrappedPC;
-      if (window.webkitRTCPeerConnection)
-        window.webkitRTCPeerConnection = WrappedPC;
+      if (window.webkitRTCPeerConnection) window.webkitRTCPeerConnection = WrappedPC;
       setInterval(function () {
         for (var i = livePCs.length - 1; i >= 0; i--) {
           var pc = livePCs[i];
@@ -810,10 +646,7 @@
           var c = this.context;
           if (!c.__manglaraTap) {
             c.__manglaraTap = c.createMediaStreamDestination();
-            teeTrack(
-              c.__manglaraTap.stream.getAudioTracks()[0],
-              "audio-context",
-            );
+            teeTrack(c.__manglaraTap.stream.getAudioTracks()[0], "audio-context");
           }
           origConnect.call(this, c.__manglaraTap);
         }
@@ -826,10 +659,7 @@
 
   // And whatever remote audio the page plays through a media element.
   try {
-    var srcDesc = Object.getOwnPropertyDescriptor(
-      HTMLMediaElement.prototype,
-      "srcObject",
-    );
+    var srcDesc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "srcObject");
     if (srcDesc && srcDesc.set) {
       Object.defineProperty(HTMLMediaElement.prototype, "srcObject", {
         configurable: true,
@@ -837,14 +667,9 @@
         get: srcDesc.get,
         set: function (stream) {
           try {
-            if (
-              stream &&
-              stream.getAudioTracks &&
-              sinkHolder.indexOf(this) < 0
-            ) {
+            if (stream && stream.getAudioTracks && sinkHolder.indexOf(this) < 0) {
               var ats = stream.getAudioTracks();
-              for (var k = 0; k < ats.length; k++)
-                teeTrack(ats[k], "media-element");
+              for (var k = 0; k < ats.length; k++) teeTrack(ats[k], "media-element");
             }
           } catch (_) {}
           return srcDesc.set.call(this, stream);
@@ -914,9 +739,6 @@
       case "turn_end":
         postToAvatar({ type: "turn_end" });
         break;
-      case "wake_listen":
-        setWakeListen(msg.enabled);
-        break;
       case "avatar_state":
         if (typeof msg.state === "string") setAvatarState(msg.state);
         break;
@@ -942,26 +764,18 @@
       return {
         tee: teeStats,
         tracks: teeTrackList.map(function (t) {
-          return {
-            id: t.id.slice(0, 8),
-            muted: t.muted,
-            enabled: t.enabled,
-            state: t.readyState,
-          };
+          return { id: t.id.slice(0, 8), muted: t.muted, enabled: t.enabled, state: t.readyState };
         }),
         mediaElements: Array.prototype.slice
           .call(document.querySelectorAll("audio,video"))
-          .filter(function (el) {
-            return sinkHolder.indexOf(el) < 0;
-          })
+          .filter(function (el) { return sinkHolder.indexOf(el) < 0; })
           .map(function (el) {
             var so = el.srcObject;
             return {
               tag: el.tagName,
               paused: el.paused,
               muted: el.muted,
-              audioTracks:
-                so && so.getAudioTracks ? so.getAudioTracks().length : 0,
+              audioTracks: so && so.getAudioTracks ? so.getAudioTracks().length : 0,
               src: el.src ? "url" : so ? "stream" : "none",
             };
           }),
@@ -969,9 +783,7 @@
         micOn: micOn,
         camOn: camOn,
         avatarReady: avatarReady,
-        avatarFrameAgeMs: lastAvatarFrameAt
-          ? Date.now() - lastAvatarFrameAt
-          : null,
+        avatarFrameAgeMs: lastAvatarFrameAt ? Date.now() - lastAvatarFrameAt : null,
         wsOpen: !!(ws && ws.readyState === 1),
       };
     },

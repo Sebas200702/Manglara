@@ -15,13 +15,11 @@ from playwright.async_api import async_playwright
 
 from config import (
     MEETING_AVATAR_URL,
-    MEETING_BOT_NAME,
     MEETING_CHROMIUM_EXECUTABLE,
     MEETING_CHROME_PROFILE_DIR,
     MEETING_HEADLESS,
     MEETING_WEB_URL,
 )
-from .wake_gate import wake_words
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +57,6 @@ def build_init_script(
             "sessionId": session_id,
             "avatarUrl": avatar_url,
             "avatarOrigin": avatar_origin,
-            "wakeWords": wake_words(MEETING_BOT_NAME),
         }
     )
     sel = json.dumps(selectors or {})

@@ -80,10 +80,8 @@ Manglara puede unirse a reuniones externas de Microsoft Teams, Zoom y Google Mee
 3. Crea una reunión de prueba vacía en Teams, Zoom o Meet y copia el link (ver `docs/meeting-test-guide.md`).
 4. Pega el link (o el ID de Zoom/Meet) → el badge detecta el proveedor → **Conectar**.
 5. Desde la reunión, como anfitrión, **admite a "Manglara"** desde la sala de espera. La web pasa a "En reunión (dormida)": se ve el avatar pero no escucha ni habla.
-6. Pulsa **▶ Iniciar Manglara Meeting Live** y di «Manglara» seguido de tu pregunta. Solo esa intervención se envía a Gemini; una pausa vuelve a cerrar el paso del audio.
+6. Pulsa **▶ Iniciar Manglara Meeting Live**: Manglara escucha a los participantes y responde en la reunión.
 7. Controles: **Silenciar** (corta su voz; sigue escuchando), **Cámara**, **Apagar interacción** (vuelve a dormida, reactivable) y **Desconectar** (sale y libera todo).
-
-La detección del nombre ocurre en el Chromium del bot con la Web Speech API (`SpeechRecognition`), que escucha la mezcla de audio de los participantes mientras la interacción está activa. Ese servicio de reconocimiento es de Google y funciona en la nube: el audio de la reunión sale hacia él aunque nadie diga el nombre. Hasta que reconoce «Manglara», el audio no se envía a Gemini; el backend conserva 3 segundos en memoria para incluir el inicio del llamado. Tras una pausa de 1,2 segundos el paso se cierra y se avisa a Gemini del fin del audio para que responda sin esperar.
 
 Para ver qué hace el bot, arranca el backend con `MEETING_HEADLESS=false`: se abre la ventana de Chromium.
 

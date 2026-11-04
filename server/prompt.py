@@ -102,10 +102,12 @@ SYSTEM_PROMPT = (
 # idioma lo detecta el modelo, que es mucho mejor nisso que una lista.
 
 LANGUAGE_REMINDER = (
-    "[Nota del sistema — idioma: la persona te está hablando en su propio idioma y ahí "
-    "respondes. El material de referencia (currículo, cartillas y documentos) está en "
-    "español: tradúcelo y no cambies al español. Si te saliste del idioma de la persona, "
-    "corrige en la siguiente respuesta sin explicaciones.]"
+    "[Nota del sistema — idioma: responde en el MISMO idioma en que te habla la persona, "
+    "sea cual sea; si te habla en español, respondes en español. El idioma de tu respuesta "
+    "lo marca la persona, no el material de referencia: el currículo, las cartillas y los "
+    "documentos están en español, y si la persona habla otro idioma traduces el contenido a "
+    "su idioma. Nunca cambies de idioma por el material. Si te saliste del idioma de la "
+    "persona, corrige en la siguiente respuesta sin explicaciones.]"
 )
 
 CONTEXT_NOTE = (

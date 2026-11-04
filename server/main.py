@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from config import CORS_ALLOW_ORIGINS, MEETING_WEB_URL, PORT
+from config import CORS_ALLOW_ORIGINS, MEETING_WEB_URL, PORT, VOICE_VAD_SILENCE_MS
 from db import list_active_documents
 from gemini_client import GeminiLiveClient
 from knowledge.router import auth_router, router as knowledge_router
@@ -23,6 +23,19 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("server")
+
+
+def voice_session_config() -> dict:
+    """Live session settings for the public voice chat."""
+    if VOICE_VAD_SILENCE_MS <= 0:
+        return {}
+    return {
+        "realtime_input_config": {
+            "automatic_activity_detection": {
+                "silence_duration_ms": VOICE_VAD_SILENCE_MS,
+            }
+        }
+    }
 
 # Eager RAG: fire retrieval while the user is still speaking so the context
 # reaches Gemini before it starts answering.
@@ -76,6 +89,7 @@ async def ws_voice(ws: WebSocket):
     logger.info("[ws] Client connected")
 
     gemini = GeminiLiveClient()
+    active: list[dict] = []
 
     try:
         active = await list_active_documents()
@@ -94,7 +108,10 @@ async def ws_voice(ws: WebSocket):
         knowledge = ""
 
     try:
-        await gemini.connect(system_prompt=build_system_prompt(knowledge))
+        await gemini.connect(
+            system_prompt=build_system_prompt(knowledge),
+            extra_config=voice_session_config(),
+        )
     except Exception as e:
         logger.error(f"[ws] Gemini connect failed: {e}")
         await ws.send_json({"type": "error", "message": str(e)})
@@ -126,11 +143,14 @@ async def ws_voice(ws: WebSocket):
 
     async def run_retrieval(text: str):
         try:
-            active = await list_active_documents()
-            doc_ids = [d["id"] for d in active]
+            # Reuse the session's document list: one less round trip before the
+            # context reaches the model. Fetch only if the preload failed.
+            docs = active or await list_active_documents()
+            doc_ids = [d["id"] for d in docs]
             if not doc_ids:
                 return
-            context = await retrieve_context(doc_ids, text)
+            names = {d["id"]: d["name"] for d in docs}
+            context = await retrieve_context(doc_ids, text, names=names)
             if context:
                 await gemini.inject_context(CONTEXT_NOTE + "\n\n" + context)
                 logger.info("[rag] injected %d chars of context", len(context))

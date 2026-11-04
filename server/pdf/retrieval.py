@@ -7,11 +7,16 @@ from knowledge.embedding import embed_texts
 logger = logging.getLogger(__name__)
 
 
-def assemble_context(chunks: list[dict], max_chars: int = 4000) -> str:
+def assemble_context(
+    chunks: list[dict], max_chars: int = 4000, names: dict[str, str] | None = None
+) -> str:
     parts = []
     total = 0
     for c in chunks:
-        header = f"[Página {c['page_num']}]"
+        # Naming the source lets the model attribute a fact to its cartilla
+        # instead of mixing pages from different documents.
+        name = (names or {}).get(c.get("document_id", ""))
+        header = f"[{name} — Página {c['page_num']}]" if name else f"[Página {c['page_num']}]"
         content = c["content"].strip()
         entry = f"{header}\n{content}"
         if total + len(entry) > max_chars:
@@ -22,7 +27,10 @@ def assemble_context(chunks: list[dict], max_chars: int = 4000) -> str:
 
 
 async def retrieve_context(
-    document_ids: str | list[str], query: str, top_k: int = 8
+    document_ids: str | list[str],
+    query: str,
+    top_k: int = 8,
+    names: dict[str, str] | None = None,
 ) -> str:
     # Ya no hay modelo ONNX local: el embedding es una llamada de red vía
     # `embed_texts()`, y se espera directamente en el event loop (no bloquea
@@ -34,4 +42,4 @@ async def retrieve_context(
         chunks = await db.search_chunks_multi(list(document_ids), embedding, top_k=top_k)
     if not chunks:
         return ""
-    return assemble_context(chunks)
+    return assemble_context(chunks, names=names)

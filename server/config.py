@@ -25,6 +25,13 @@ GEMINI_LIVE_MODEL = os.getenv(
 )
 GEMINI_DIGEST_MODEL = os.getenv("GEMINI_DIGEST_MODEL", "models/gemini-3.5-flash")
 GEMINI_VOICE_NAME = os.getenv("GEMINI_VOICE_NAME", "Zephyr")
+# Lower than the API default (1.0) so answers stick to the prompt and the
+# cartillas instead of improvising facts; raise it if the voice feels flat.
+GEMINI_TEMPERATURE = float(os.getenv("GEMINI_TEMPERATURE", "0.4"))
+# Silence before the Live model treats the visitor's turn as finished. The
+# extra margin lets the retrieved cartilla context land before Manglara starts
+# answering; 0 keeps the API default.
+VOICE_VAD_SILENCE_MS = int(os.getenv("VOICE_VAD_SILENCE_MS", "700"))
 PORT = int(os.getenv("PORT", "8000"))
 
 # Orígenes extra del frontend con permiso CORS (coma-separados), p. ej. la web

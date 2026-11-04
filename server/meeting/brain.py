@@ -248,7 +248,8 @@ class MeetingBrain:
             doc_ids = [d["id"] for d in docs]
             if not doc_ids:
                 return
-            context = await retrieve_context(doc_ids, text)
+            names = {d["id"]: d["name"] for d in docs}
+            context = await retrieve_context(doc_ids, text, names=names)
             if context:
                 await gemini.inject_context(CONTEXT_NOTE + "\n\n" + context)
                 logger.info("[brain] contexto RAG inyectado: %d chars", len(context))

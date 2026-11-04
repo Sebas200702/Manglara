@@ -5,7 +5,12 @@ from typing import AsyncIterator, Callable, Any
 from google import genai
 from google.genai import types
 
-from config import GEMINI_API_KEY, GEMINI_LIVE_MODEL, GEMINI_VOICE_NAME
+from config import (
+    GEMINI_API_KEY,
+    GEMINI_LIVE_MODEL,
+    GEMINI_TEMPERATURE,
+    GEMINI_VOICE_NAME,
+)
 from prompt import SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -38,6 +43,7 @@ class GeminiLiveClient:
     ):
         config = {
             "response_modalities": ["AUDIO"],
+            "temperature": GEMINI_TEMPERATURE,
             "input_audio_transcription": {},
             "output_audio_transcription": {},
             "speech_config": {

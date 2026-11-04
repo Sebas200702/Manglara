@@ -55,6 +55,38 @@ bun run --filter web dev
 3. El avatar cambia entre escuchando / pensando / hablando
 4. En DevTools → Network: no debe haber requests a `generativelanguage.googleapis.com` desde el browser
 
+## Medir alucinaciones
+
+**Eval de grounding** (antes de desplegar un cambio de prompt, modelo o conocimiento):
+
+```bash
+cd server
+.venv/bin/python -m eval.run_eval --repeat 3 --out /tmp/eval.json
+```
+
+Abre una sesión real de Gemini Live por caso, con el mismo prompt, conocimiento
+precargado y RAG que el chat de voz, y revisa las respuestas contra
+`server/eval/cases.json`: cifras oficiales, créditos, premisas falsas y datos que
+Manglara no tiene (debe decir que no los tiene). Sale con `0` si todo pasa, `1`
+si alguna respuesta falla (`--min-pass 0.9` relaja el umbral) y `2` si una sesión
+no pudo correr (red o cuota): en ese caso no hay veredicto. Los patrones de los
+casos se escriben en minúsculas y sin tildes.
+
+Los casos con `source` salen de las cartillas ingestadas y citan documento,
+página y frase textual. Después de cambiar o desactivar documentos, corre
+`.venv/bin/python -m eval.run_eval --check-sources` (sin llamadas a Gemini): marca
+`[STALE]` los casos cuya cita ya no está en el conocimiento activo.
+
+**Métricas en producción**: cada turno del chat de voz deja en el log del backend
+una línea `[metric] turn {...}` con `context`:
+
+- `before_answer`: el contexto de las cartillas llegó antes de que respondiera.
+- `late`: llegó después, así que respondió sin él (riesgo de alucinar).
+- `none`: no hubo contexto recuperado.
+
+Al cerrar la sesión queda `[metric] session {...}` con el conteo de cada caso.
+Si `late` crece, sube `VOICE_VAD_SILENCE_MS`.
+
 ## Reuniones externas (Live Meeting con Manglara)
 
 Manglara puede unirse a reuniones externas de Microsoft Teams, Zoom y Google Meet como participante: escucha, habla (Gemini Live) y aparece en video con su avatar 3D. El bot corre Chromium headless desde el backend y puentea el audio por JavaScript inyectado, así que no necesita drivers de audio virtual en ninguna máquina. Todo se controla desde la sección **Reunión** de la web (`/reunion`).
@@ -242,6 +274,8 @@ sudo firewall-cmd --reload
 | `GEMINI_API_KEY` | API key de Google AI |
 | `GEMINI_LIVE_MODEL` | Modelo Live (default: gemini-3.1-flash-live-preview) |
 | `GEMINI_VOICE_NAME` | Voz predefinida (default: Zephyr) |
+| `GEMINI_TEMPERATURE` | Temperatura del modelo Live; más baja = menos improvisación (default: 0.4) |
+| `VOICE_VAD_SILENCE_MS` | Silencio (ms) antes de que Manglara responda en el chat de voz; da tiempo a que llegue el contexto de las cartillas. 0 = default de la API (default: 700) |
 | `PORT` | Puerto del backend (default: 8000) |
 | `CORS_ALLOW_ORIGINS` | Orígenes extra del frontend con permiso CORS, coma-separados (la web desplegada) |
 | `MEETING_BOT_NAME` | Nombre del bot en la reunión (default: Manglara) |

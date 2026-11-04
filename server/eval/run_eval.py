@@ -3,6 +3,7 @@ knowledge preload and retrieval as the voice chat) the questions in
 cases.json and fails when she invents or omits facts.
 
     cd server && .venv/bin/python -m eval.run_eval [--repeat 3] [--case ID]
+    cd server && .venv/bin/python -m eval.run_eval --check-sources
 
 Exits 1 when the pass rate is below --min-pass, so it can gate a deploy, and
 2 when a session could not run (network, quota): no verdict either way.
@@ -16,8 +17,9 @@ import logging
 import sys
 from pathlib import Path
 
-from db import list_active_documents
+from db import list_active_documents, list_document_chunks
 from eval.scoring import score
+from eval.sources import stale_sources
 from gemini_client import GeminiLiveClient
 from pdf.digest import build_knowledge_context
 from pdf.retrieval import retrieve_context
@@ -71,8 +73,28 @@ async def run(args) -> int:
             print(f"no case matches {args.case}", file=sys.stderr)
             return 2
 
-    docs = await list_active_documents()
-    knowledge = await build_knowledge_context([d["id"] for d in docs])
+    try:
+        docs = await list_active_documents()
+    except Exception as e:
+        print(f"could not load the active documents: {type(e).__name__}: {e}; no verdict")
+        return 2
+    if args.check_sources:
+        chunks = {
+            d["name"]: [c["content"] for c in await list_document_chunks(d["id"])]
+            for d in docs
+        }
+        problems = stale_sources(cases, chunks)
+        for p in problems:
+            print(f"[STALE] {p}")
+        cited = sum(1 for c in cases if c.get("source"))
+        print(f"{cited - len(problems)}/{cited} cited sources found in the active documents")
+        return 1 if problems else 0
+
+    try:
+        knowledge = await build_knowledge_context([d["id"] for d in docs])
+    except Exception as e:
+        print(f"could not load the knowledge preload: {type(e).__name__}: {e}; no verdict")
+        return 2
     system_prompt = build_system_prompt(knowledge)
     print(f"{len(docs)} active documents, {len(knowledge)} chars of preloaded knowledge\n")
 
@@ -124,6 +146,11 @@ def main():
     parser.add_argument("--repeat", type=int, default=1, help="runs per case (answers vary)")
     parser.add_argument("--case", action="append", help="only this case id (repeatable)")
     parser.add_argument("--min-pass", type=float, default=1.0, help="required pass rate, 0-1")
+    parser.add_argument(
+        "--check-sources",
+        action="store_true",
+        help="only check that cited quotes still exist in the active documents (no Live calls)",
+    )
     parser.add_argument("--out", help="write every answer and failure as JSON here")
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)

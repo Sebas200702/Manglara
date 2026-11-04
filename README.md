@@ -72,6 +72,11 @@ si alguna respuesta falla (`--min-pass 0.9` relaja el umbral) y `2` si una sesi�
 no pudo correr (red o cuota): en ese caso no hay veredicto. Los patrones de los
 casos se escriben en minúsculas y sin tildes.
 
+Los casos con `source` salen de las cartillas ingestadas y citan documento,
+página y frase textual. Después de cambiar o desactivar documentos, corre
+`.venv/bin/python -m eval.run_eval --check-sources` (sin llamadas a Gemini): marca
+`[STALE]` los casos cuya cita ya no está en el conocimiento activo.
+
 **Métricas en producción**: cada turno del chat de voz deja en el log del backend
 una línea `[metric] turn {...}` con `context`:
 

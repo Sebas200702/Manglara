@@ -81,6 +81,11 @@ async def _fetch_chunk_rows(document_filter: str) -> list[dict]:
     return rows
 
 
+async def list_document_chunks(document_id: str) -> list[dict]:
+    """All chunks of one document (cached like the searches)."""
+    return await _fetch_chunk_rows(f"eq.{document_id}")
+
+
 async def search_chunks(
     document_id: str, embedding: list[float], top_k: int = 5
 ) -> list[dict]:

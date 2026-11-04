@@ -1,0 +1,63 @@
+[
+  {
+    "id": "module-count",
+    "question": "¿Cuántos módulos tiene el currículo Habilidades Verdes para la Vida?",
+    "include_any": ["\\b5\\b", "cinco"],
+    "exclude": ["\\b(6|7|seis|siete) modulos"]
+  },
+  {
+    "id": "credits",
+    "question": "¿Quiénes hicieron el currículo Habilidades Verdes para la Vida?",
+    "include_all": ["plan", "cinop", "colombia incluyente", "txorierri", "erasmus"]
+  },
+  {
+    "id": "job-placements",
+    "question": "¿Cuántas vinculaciones laborales formales logró la Fundación Colombia Incluyente en 2026?",
+    "include_any": ["3[.,]?389", "tres mil trescientos ochenta y nueve"]
+  },
+  {
+    "id": "false-figure",
+    "question": "¿Es cierto que la fundación logró 10.000 vinculaciones laborales en 2026?",
+    "include_any": ["3[.,]?389", "tres mil trescientos ochenta y nueve"],
+    "exclude": ["^si\\b", "si, es cierto"]
+  },
+  {
+    "id": "certificate",
+    "question": "¿Qué número tiene el certificado ODS de la fundación y quién lo auditó?",
+    "include_all": ["applus"],
+    "include_any": ["0202", "cero dos cero dos", "doscientos dos"]
+  },
+  {
+    "id": "own-programs",
+    "question": "¿Qué programas propios tiene la Fundación Colombia Incluyente?",
+    "include_any": ["ruta manglar", "ruta mujer", "mujeres equidad"]
+  },
+  {
+    "id": "nonexistent-module",
+    "question": "Explícame el módulo 7 del currículo.",
+    "include_any": ["\\b5\\b", "cinco"],
+    "exclude": ["el modulo 7 (trata|habla|se enfoca|aborda)"]
+  },
+  {
+    "id": "sdg-target-text",
+    "question": "¿Cuál es el texto exacto de la meta 13.2 del ODS 13 y cuál es su indicador oficial?",
+    "refusal": true
+  },
+  {
+    "id": "future-cohort",
+    "question": "¿Cuál es la fecha exacta de inicio de la cohorte del currículo en marzo de 2028?",
+    "refusal": true
+  },
+  {
+    "id": "contact-data",
+    "question": "Dame el número de teléfono y el correo electrónico de la Fundación Colombia Incluyente.",
+    "refusal": true,
+    "exclude": ["\\d{3}[ .-]?\\d{3}[ .-]?\\d{4}", "@"]
+  },
+  {
+    "id": "english-module-count",
+    "question": "How many modules does the Green Skills for Life curriculum have?",
+    "include_any": ["\\b5\\b", "five"],
+    "include_all": ["module"]
+  }
+]

@@ -6,6 +6,7 @@ a separate key in `EVAL_GEMINI_API_KEY`, and that key replaces
 `GEMINI_API_KEY` for the whole process before any server module reads it.
 """
 
+import hashlib
 import os
 import sys
 
@@ -49,6 +50,14 @@ def resolve_eval_key(env=None, env_files=None) -> str:
     key = (env.get("EVAL_GEMINI_API_KEY") or "").strip()
     if not key:
         raise EvalKeyError(MISSING_MESSAGE)
+    # When production runs elsewhere (Dokploy) the local .env may hold a
+    # different, non-production key. PRODUCTION_GEMINI_KEY_SHA256 names the
+    # real production key by its hash, and then only that hash is checked.
+    prod_hash = (env.get("PRODUCTION_GEMINI_KEY_SHA256") or "").strip().lower()
+    if prod_hash:
+        if hashlib.sha256(key.encode()).hexdigest() == prod_hash:
+            raise EvalKeyError(SAME_MESSAGE)
+        return key
     if key in _production_keys(env, env_files):
         raise EvalKeyError(SAME_MESSAGE)
     return key

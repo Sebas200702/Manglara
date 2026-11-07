@@ -94,6 +94,27 @@ def test_keyguard():
     )
     check(key == "test-key", "a distinct EVAL key is accepted")
 
+    import hashlib
+
+    with tempfile.TemporaryDirectory() as tmp:
+        env_file = os.path.join(tmp, ".env")
+        with open(env_file, "w") as f:
+            f.write("GEMINI_API_KEY=old-local-key\n")
+        prod_hash = hashlib.sha256(b"real-prod").hexdigest()
+        key = keyguard.resolve_eval_key(
+            {"EVAL_GEMINI_API_KEY": "old-local-key", "PRODUCTION_GEMINI_KEY_SHA256": prod_hash},
+            env_files=[env_file],
+        )
+        check(key == "old-local-key", "with a production hash, the local .env key is usable")
+        try:
+            keyguard.resolve_eval_key(
+                {"EVAL_GEMINI_API_KEY": "real-prod", "PRODUCTION_GEMINI_KEY_SHA256": prod_hash.upper()},
+                env_files=[env_file],
+            )
+            check(False, "EVAL key matching the production hash refuses")
+        except keyguard.EvalKeyError:
+            check(True, "EVAL key matching the production hash refuses")
+
     import config
     import gemini_client
 

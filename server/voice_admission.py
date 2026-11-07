@@ -10,7 +10,9 @@ State lives in process memory: it is correct with the single uvicorn worker
 the backend runs today (the meeting bot also requires one worker).
 """
 
-from collections import Counter
+import time
+from collections import Counter, deque
+from typing import Callable
 
 BUSY_MESSAGE = "Manglara está atendiendo a muchas personas. Intenta de nuevo en un momento."
 ORIGIN_MESSAGE = "Origen no permitido"
@@ -22,10 +24,15 @@ class VoiceAdmission:
         max_sessions: int = 0,
         max_per_ip: int = 0,
         allowed_origins: list[str] | None = None,
+        max_new_per_min: int = 0,
+        clock: Callable[[], float] = time.monotonic,
     ):
         self.max_sessions = max_sessions
         self.max_per_ip = max_per_ip
         self.allowed_origins = {o.rstrip("/") for o in (allowed_origins or [])}
+        self.max_new_per_min = max_new_per_min
+        self._clock = clock
+        self._recent_starts: deque[float] = deque()
         self.active = 0
         self._per_ip: Counter[str] = Counter()
 
@@ -41,6 +48,13 @@ class VoiceAdmission:
             return BUSY_MESSAGE
         if self.max_per_ip and self._per_ip[ip] >= self.max_per_ip:
             return BUSY_MESSAGE
+        if self.max_new_per_min:
+            now = self._clock()
+            while self._recent_starts and now - self._recent_starts[0] >= 60:
+                self._recent_starts.popleft()
+            if len(self._recent_starts) >= self.max_new_per_min:
+                return BUSY_MESSAGE
+            self._recent_starts.append(now)
         self.active += 1
         self._per_ip[ip] += 1
         return None

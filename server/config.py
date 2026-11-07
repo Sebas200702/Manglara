@@ -50,6 +50,20 @@ VOICE_MAX_SESSIONS = int(os.getenv("VOICE_MAX_SESSIONS", "0"))
 VOICE_MAX_SESSIONS_PER_IP = int(os.getenv("VOICE_MAX_SESSIONS_PER_IP", "0"))
 # Orígenes del navegador que pueden abrir la voz (coma-separados). Vacío = todos.
 VOICE_ALLOWED_ORIGINS = _csv("VOICE_ALLOWED_ORIGINS")
+# Sesiones nuevas por minuto: cada conexión manda el system prompt completo
+# (~18k tokens) y una ráfaga agota los tokens por minuto de Gemini Live.
+VOICE_MAX_NEW_SESSIONS_PER_MIN = int(os.getenv("VOICE_MAX_NEW_SESSIONS_PER_MIN", "0"))
+# Cierra la sesión si la persona no habla en este tiempo (0 = nunca): una
+# pestaña olvidada sigue gastando audio y video.
+VOICE_IDLE_TIMEOUT_S = float(os.getenv("VOICE_IDLE_TIMEOUT_S", "90"))
+# Duración máxima de una sesión de voz (0 = sin límite).
+VOICE_MAX_SESSION_MIN = float(os.getenv("VOICE_MAX_SESSION_MIN", "0"))
+# Conocimiento precargado en el system prompt de cada sesión (caracteres).
+# Menos = conexión más barata; la recuperación (RAG) sigue cubriendo el resto.
+VOICE_PRELOAD_CHARS = int(os.getenv("VOICE_PRELOAD_CHARS", "60000"))
+# Resolución con la que Gemini tokeniza los frames de la cámara. LOW cuesta
+# ~4 veces menos por frame. Vacío = la del modelo.
+GEMINI_MEDIA_RESOLUTION = os.getenv("GEMINI_MEDIA_RESOLUTION", "MEDIA_RESOLUTION_LOW")
 # Registrar transcripciones de la voz pública en los logs (datos personales).
 LOG_TRANSCRIPTS = _flag("LOG_TRANSCRIPTS", "true")
 # API del bot de reuniones (/meetings, /ws/meetings). No tiene autenticación:

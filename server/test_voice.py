@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 import main
 from meeting import router as meeting_router_mod
 from voice_admission import BUSY_MESSAGE, ORIGIN_MESSAGE, VoiceAdmission
+from voice_watchdog import IDLE_MESSAGE, MAX_DURATION_MESSAGE, SessionWatchdog
 
 _passed = 0
 
@@ -176,6 +177,84 @@ def test_session_ends_when_browser_disconnects():
     check(main.voice_admission.active == 0, "slot released on browser disconnect")
 
 
+def test_new_sessions_per_minute():
+    now = [0.0]
+    a = VoiceAdmission(max_new_per_min=2, clock=lambda: now[0])
+    check(a.try_acquire("a") is None and a.try_acquire("b") is None, "per-minute cap admits up to the limit")
+    a.release("a")
+    a.release("b")
+    check(a.try_acquire("c") == BUSY_MESSAGE, "per-minute cap counts starts, not active sessions")
+    now[0] = 60.0
+    check(a.try_acquire("c") is None, "per-minute window slides after 60 s")
+    check(a.active == 1, "rejected start did not take a slot")
+
+
+def test_watchdog():
+    now = [0.0]
+    w = SessionWatchdog(idle_s=90, max_s=600, clock=lambda: now[0])
+    now[0] = 89
+    check(w.expired() is None, "watchdog: active before idle timeout")
+    w.touch()
+    now[0] = 89 + 89
+    check(w.expired() is None, "watchdog: touch resets idle timer")
+    now[0] = 89 + 90
+    check(w.expired() == IDLE_MESSAGE, "watchdog: idle timeout ends session")
+    w.touch()
+    now[0] = 600
+    check(w.expired() == MAX_DURATION_MESSAGE, "watchdog: max duration ends session")
+    check(SessionWatchdog(clock=lambda: 1e9).expired() is None, "watchdog: 0 disables both limits")
+
+
+def test_connect_error_message():
+    quota = Exception("1011 None. You exceeded your current quota, please check your plan")
+    check(main._connect_error_message(quota) == BUSY_MESSAGE, "quota error shown as busy")
+    other = Exception("handshake failed: secret internal detail")
+    msg = main._connect_error_message(other)
+    check(msg == main.CONNECT_FAILED_MESSAGE and "secret" not in msg, "other connect errors are not leaked")
+
+
+class FailingGemini(FakeGemini):
+    async def connect(self, system_prompt=None, extra_config=None):
+        raise RuntimeError("1011 None. You exceeded your current quota")
+
+
+def test_ws_quota_error_reads_as_busy():
+    _use(VoiceAdmission())
+    main.GeminiLiveClient = FailingGemini
+    try:
+        client = TestClient(main.app)
+        with client.websocket_connect("/ws/voice") as ws:
+            check(ws.receive_json() == {"type": "error", "message": BUSY_MESSAGE}, "gemini quota error reaches client as busy")
+    finally:
+        main.GeminiLiveClient = FakeGemini
+    check(main.voice_admission.active == 0, "slot released after gemini connect failure")
+
+
+class IdleSocket(FakeSocket):
+    """Browser that stays connected but never speaks."""
+
+    async def iter_text(self):
+        await asyncio.Event().wait()
+        yield ""  # pragma: no cover
+
+
+def test_idle_session_is_ended():
+    FakeGemini.instances.clear()
+    _use(VoiceAdmission())
+    main.VOICE_IDLE_TIMEOUT_S = 0.05
+    sock = IdleSocket()
+    try:
+        asyncio.run(asyncio.wait_for(main.ws_voice(sock), timeout=5))
+        ended = True
+    except asyncio.TimeoutError:
+        ended = False
+    finally:
+        main.VOICE_IDLE_TIMEOUT_S = 90
+    check(ended, "idle session ends on its own")
+    check(sock.sent[-1] == {"type": "session_ended", "message": IDLE_MESSAGE}, "client told why the session ended")
+    check(FakeGemini.instances[0].closed and main.voice_admission.active == 0, "idle end closes gemini and frees the slot")
+
+
 def test_meeting_debug_ui_rejects_forwarded_loopback():
     from fastapi import FastAPI
 
@@ -194,5 +273,10 @@ if __name__ == "__main__":
     test_ws_origin_rejected()
     test_ws_cap_and_release()
     test_session_ends_when_browser_disconnects()
+    test_new_sessions_per_minute()
+    test_watchdog()
+    test_connect_error_message()
+    test_ws_quota_error_reads_as_busy()
+    test_idle_session_is_ended()
     test_meeting_debug_ui_rejects_forwarded_loopback()
     print(f"{_passed} checks OK")

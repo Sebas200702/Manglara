@@ -114,6 +114,28 @@ describe("VoiceClient automatic reconnection", () => {
     client.disconnect();
   });
 
+  test("a session the server ended for inactivity does not auto-reconnect", async () => {
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+    globalThis.window = { location: { protocol: "http:" } } as Window & typeof globalThis;
+    const ended: string[] = [];
+    const client = new VoiceClient({ onSessionEnded: (m) => ended.push(m) });
+    Object.defineProperty(client, "reconnectBaseMs", { value: 0 });
+    Object.defineProperty(client, "reconnectMaxDelayMs", { value: 0 });
+
+    const initialConnect = client.connect();
+    const ws = FakeWebSocket.instances[0]!;
+    ws.open();
+    await initialConnect;
+    client.markActive();
+    ws.onmessage?.({ data: JSON.stringify({ type: "session_ended", message: "idle" }) } as MessageEvent);
+    ws.close();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(ended).toEqual(["idle"]);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    client.disconnect();
+  });
+
   test("a successful session resets the retry budget", async () => {
     globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
     globalThis.window = { location: { protocol: "http:" } } as Window & typeof globalThis;

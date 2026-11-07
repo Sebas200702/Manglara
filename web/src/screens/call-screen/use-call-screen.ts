@@ -116,6 +116,10 @@ export function useCallScreen() {
       onSessionReady: () => {
         setThinking(false);
       },
+      onSessionEnded: (message) => {
+        endCall();
+        setError(message);
+      },
       onError: (message) => setError(message),
       onVideoStream: (stream) => {
         if (videoRef.current) {

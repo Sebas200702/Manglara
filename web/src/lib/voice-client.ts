@@ -16,6 +16,8 @@ export interface VoiceClientCallbacks {
   onInterrupted?: () => void;
   onSpeakingChange?: (speaking: boolean) => void;
   onSessionReady?: () => void;
+  /** The server ended the call on purpose (idle / max duration). */
+  onSessionEnded?: (message: string) => void;
   onError?: (message: string) => void;
   onVideoStream?: (stream: MediaStream | null) => void;
   /** The live connection dropped; an automatic reconnection attempt is starting. */
@@ -100,7 +102,10 @@ function wsUrl(path = "/ws/voice"): string {
   return `${backendWsOrigin()}${path}`;
 }
 
-const VIDEO_FRAME_INTERVAL_MS = 1500;
+// Every frame is billed as image tokens by Gemini Live, and video was the
+// largest share of each session's quota: one frame every 3 s is enough for
+// Manglara to see what the person shows her.
+const VIDEO_FRAME_INTERVAL_MS = 3000;
 /**
  * Capture size sent to the model. Kept at the previous canvas dimensions, including
  * the 16:9 -> 4:3 squash the old `drawImage` did, so what Gemini sees is unchanged.
@@ -316,6 +321,12 @@ export class VoiceClient {
       case "session_ready":
         this.reconnectAttempts = 0;
         this.callbacks.onSessionReady?.();
+        break;
+      case "session_ended":
+        // The close that follows is intended: no reconnect.
+        this.intentionalClose = true;
+        this.active = false;
+        this.callbacks.onSessionEnded?.(msg.message);
         break;
       case "error":
         this.callbacks.onError?.(msg.message);

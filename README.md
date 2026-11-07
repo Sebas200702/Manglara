@@ -257,6 +257,11 @@ sudo firewall-cmd --reload
 | `VOICE_MAX_SESSIONS_PER_IP` | Tope por IP. Cuidado en eventos: todo el wifi del lugar sale por una IP. 0 = sin límite (default: 0) |
 | `VOICE_ALLOWED_ORIGINS` | Orígenes del navegador que pueden abrir `/ws/voice`, coma-separados; vacío = todos (default: vacío) |
 | `LOG_TRANSCRIPTS` | `false` deja las transcripciones de la voz pública fuera de los logs (default: true) |
+| `VOICE_MAX_NEW_SESSIONS_PER_MIN` | Sesiones de voz nuevas por minuto; cada una manda el system prompt completo y una ráfaga agota los tokens por minuto de Gemini. 0 = sin límite (default: 0) |
+| `VOICE_IDLE_TIMEOUT_S` | Cierra la sesión si la persona no habla en este tiempo; la web muestra el motivo y no reconecta. 0 = nunca (default: 90) |
+| `VOICE_MAX_SESSION_MIN` | Duración máxima de una sesión de voz. 0 = sin límite (default: 0) |
+| `VOICE_PRELOAD_CHARS` | Conocimiento precargado en el system prompt de cada sesión; menos = conexión más barata, el RAG cubre el resto (default: 60000) |
+| `GEMINI_MEDIA_RESOLUTION` | Resolución con la que Gemini tokeniza los frames de la cámara; `MEDIA_RESOLUTION_LOW` cuesta ~4 veces menos. Vacío = la del modelo (default: `MEDIA_RESOLUTION_LOW`) |
 
 Cada sesión de voz abre su propia sesión de Gemini Live: el techo real de
 usuarios simultáneos es la cuota del proyecto en Google, no el VPS. Fijar

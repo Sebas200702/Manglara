@@ -30,9 +30,22 @@
 	respond /health 200
 
 	header {
-		X-Content-Security-Policy "nosniff"
+		X-Content-Type-Options "nosniff"
 		-Server
 	}
+
+	# Cache. Los bundles de Vite (/assets/*) llevan hash en el nombre: se
+	# cachean para siempre. Los medios de public/ (avatar, video, headaudio)
+	# no llevan hash: un día. Lo demás (index.html y rutas de la SPA)
+	# siempre se revalida, para que un deploy nuevo se vea al recargar.
+	@hashed path /assets/*
+	header @hashed Cache-Control "public, max-age=31536000, immutable"
+
+	@media path *.glb *.mp4 *.mp3 /headaudio/* /logos/*
+	header @media Cache-Control "public, max-age=86400"
+
+	@revalidate not path /assets/* *.glb *.mp4 *.mp3 /headaudio/* /logos/* /api/* /ws/*
+	header @revalidate Cache-Control "no-cache"
 
 	# API REST del backend (panel de conocimiento, ingesta de fuentes).
 	handle /api/* {

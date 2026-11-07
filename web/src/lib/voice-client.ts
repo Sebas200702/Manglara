@@ -251,7 +251,9 @@ export class VoiceClient {
       await this.connect();
       await this.startMic();
       this.reconnecting = false;
-      this.reconnectAttempts = 0;
+      // reconnectAttempts is reset on `session_ready`, not here: a server
+      // that is full accepts the socket and then rejects it, and resetting on
+      // open would retry every second forever.
       this.callbacks.onReconnected?.();
     } catch {
       // `scheduleReconnect()` is guarded while this attempt is in flight. Clear
@@ -272,10 +274,11 @@ export class VoiceClient {
     this.reconnecting = true;
     this.reconnectAttempts += 1;
     this.callbacks.onReconnecting?.(this.reconnectAttempts);
-    const delay = Math.min(
-      this.reconnectBaseMs * 2 ** (this.reconnectAttempts - 1),
-      this.reconnectMaxDelayMs
-    );
+    // Jitter (50-100% of the backoff) so clients dropped together by a backend
+    // restart do not all reconnect in the same instant.
+    const delay =
+      Math.min(this.reconnectBaseMs * 2 ** (this.reconnectAttempts - 1), this.reconnectMaxDelayMs) *
+      (0.5 + Math.random() * 0.5);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       void this.reconnect();
@@ -311,6 +314,7 @@ export class VoiceClient {
         this.callbacks.onInterrupted?.();
         break;
       case "session_ready":
+        this.reconnectAttempts = 0;
         this.callbacks.onSessionReady?.();
         break;
       case "error":

@@ -178,7 +178,11 @@ async def debug_meeting_ui(session_id: str, request: Request):
 
     Solo desde la máquina local (devuelve texto de la UI de la reunión).
     """
-    if (request.client.host if request.client else "") not in _LOOPBACK:
+    # uvicorn corre con --forwarded-allow-ips=*: un cliente remoto puede poner
+    # "X-Forwarded-For: 127.0.0.1" y aparecer como loopback. Una petición
+    # local de verdad no pasa por ningún proxy, así que no trae la cabecera.
+    host = request.client.host if request.client else ""
+    if host not in _LOOPBACK or "x-forwarded-for" in request.headers:
         raise HTTPException(403, "Solo disponible en local")
     bridge = _get_bridge_or_404(session_id)
     page = bridge.browser.page

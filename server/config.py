@@ -35,6 +35,27 @@ CORS_ALLOW_ORIGINS = [
     if o.strip()
 ]
 
+def _csv(name: str) -> list[str]:
+    return [o.strip().rstrip("/") for o in os.getenv(name, "").split(",") if o.strip()]
+
+
+def _flag(name: str, default: str) -> bool:
+    return os.getenv(name, default).lower() in ("1", "true", "yes")
+
+
+# Voz pública (/ws/voice). Cada sesión abre una sesión de Gemini Live y gasta
+# cuota: estos topes la protegen. 0 / vacío = sin límite (comportamiento previo).
+# Ojo con el tope por IP: en un evento muchas personas comparten la IP del wifi.
+VOICE_MAX_SESSIONS = int(os.getenv("VOICE_MAX_SESSIONS", "0"))
+VOICE_MAX_SESSIONS_PER_IP = int(os.getenv("VOICE_MAX_SESSIONS_PER_IP", "0"))
+# Orígenes del navegador que pueden abrir la voz (coma-separados). Vacío = todos.
+VOICE_ALLOWED_ORIGINS = _csv("VOICE_ALLOWED_ORIGINS")
+# Registrar transcripciones de la voz pública en los logs (datos personales).
+LOG_TRANSCRIPTS = _flag("LOG_TRANSCRIPTS", "true")
+# API del bot de reuniones (/meetings, /ws/meetings). No tiene autenticación:
+# en la instancia pública conviene apagarla si no se usa.
+MEETINGS_ENABLED = _flag("MEETINGS_ENABLED", "true")
+
 SUPABASE_URL = _require("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = _require("SUPABASE_SERVICE_KEY")
 SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "documents")

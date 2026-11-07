@@ -252,6 +252,17 @@ sudo firewall-cmd --reload
 | `MEETING_ALONE_TIMEOUT_MIN` | Sale si se queda sola este tiempo; 0 = nunca (default: 10) |
 | `MEETING_WEB_URL` | URL pública de la web app, donde el bot abre el avatar (default: http://localhost:5173) |
 | `MEETING_AVATAR_URL` | Ruta (o URL absoluta) de la página del avatar (default: /meeting/avatar) |
+| `MEETINGS_ENABLED` | `false` apaga la API del bot de reuniones (`/meetings`, `/ws/meetings`), que no tiene autenticación (default: true) |
+| `VOICE_MAX_SESSIONS` | Tope de sesiones de voz simultáneas; al llenarse, la persona ve "Manglara está atendiendo a muchas personas…". 0 = sin límite (default: 0) |
+| `VOICE_MAX_SESSIONS_PER_IP` | Tope por IP. Cuidado en eventos: todo el wifi del lugar sale por una IP. 0 = sin límite (default: 0) |
+| `VOICE_ALLOWED_ORIGINS` | Orígenes del navegador que pueden abrir `/ws/voice`, coma-separados; vacío = todos (default: vacío) |
+| `LOG_TRANSCRIPTS` | `false` deja las transcripciones de la voz pública fuera de los logs (default: true) |
+
+Cada sesión de voz abre su propia sesión de Gemini Live: el techo real de
+usuarios simultáneos es la cuota del proyecto en Google, no el VPS. Fijar
+`VOICE_MAX_SESSIONS` por debajo de esa cuota. El backend corre con **un solo
+worker** de uvicorn a propósito: el bot de reuniones guarda su estado en
+memoria y con varios workers se rompe.
 
 ## Panel de conocimiento
 

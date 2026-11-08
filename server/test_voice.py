@@ -37,7 +37,7 @@ class FakeGemini:
         FakeGemini.instances.append(self)
 
     async def connect(self, system_prompt=None, extra_config=None):
-        pass
+        self.extra_config = extra_config
 
     async def receive_loop(self):
         await asyncio.Event().wait()
@@ -255,6 +255,56 @@ def test_idle_session_is_ended():
     check(FakeGemini.instances[0].closed and main.voice_admission.active == 0, "idle end closes gemini and frees the slot")
 
 
+def test_voice_session_uses_context_compression():
+    FakeGemini.instances.clear()
+    _use(VoiceAdmission())
+    asyncio.run(asyncio.wait_for(main.ws_voice(FakeSocket()), timeout=2))
+    cfg = FakeGemini.instances[0].extra_config or {}
+    check(cfg.get("context_window_compression") == {"sliding_window": {}},
+          "voice session asks Gemini for a sliding context window")
+
+
+class LeavingSocket(FakeSocket):
+    """Browser that closed the tab while Gemini was connecting."""
+
+    async def send_json(self, data):
+        raise RuntimeError("websocket is closed")
+
+
+def test_browser_leaving_before_ready_closes_gemini():
+    FakeGemini.instances.clear()
+    _use(VoiceAdmission())
+    asyncio.run(asyncio.wait_for(main.ws_voice(LeavingSocket()), timeout=2))
+    check(FakeGemini.instances[0].closed, "gemini closed when the browser left before session_ready")
+    check(main.voice_admission.active == 0, "slot released when the browser left before session_ready")
+
+
+class TalkingGemini(FakeGemini):
+    """Model that keeps answering (output transcription) for a while."""
+
+    async def receive_loop(self):
+        for _ in range(8):
+            await asyncio.sleep(0.05)
+            await self.transcript_callback("model", "parte de una respuesta larga ")
+        await asyncio.Event().wait()
+        yield b""  # pragma: no cover
+
+
+def test_model_speech_counts_as_activity():
+    _use(VoiceAdmission())
+    main.GeminiLiveClient = TalkingGemini
+    main.VOICE_IDLE_TIMEOUT_S = 0.2
+    sock = IdleSocket()
+    try:
+        asyncio.run(asyncio.wait_for(main.ws_voice(sock), timeout=5))
+    finally:
+        main.GeminiLiveClient = FakeGemini
+        main.VOICE_IDLE_TIMEOUT_S = 90
+    model_parts = [m for m in sock.sent if m.get("type") == "transcript"]
+    check(len(model_parts) == 8, "a 0.4 s answer is not cut by a 0.2 s idle timeout")
+    check(sock.sent[-1].get("type") == "session_ended", "idle timeout still ends the session after the answer")
+
+
 def test_meeting_debug_ui_rejects_forwarded_loopback():
     from fastapi import FastAPI
 
@@ -278,5 +328,8 @@ if __name__ == "__main__":
     test_connect_error_message()
     test_ws_quota_error_reads_as_busy()
     test_idle_session_is_ended()
+    test_voice_session_uses_context_compression()
+    test_browser_leaving_before_ready_closes_gemini()
+    test_model_speech_counts_as_activity()
     test_meeting_debug_ui_rejects_forwarded_loopback()
     print(f"{_passed} checks OK")

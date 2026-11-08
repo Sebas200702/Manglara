@@ -156,22 +156,34 @@ async def _voice_session(ws: WebSocket):
         knowledge = ""
 
     try:
-        await gemini.connect(system_prompt=build_system_prompt(knowledge))
+        # Without compression Gemini Live ends audio+video sessions after about
+        # two minutes and every reconnect pays the whole system prompt again;
+        # the sliding window keeps one session alive (same as the meeting bot).
+        await gemini.connect(
+            system_prompt=build_system_prompt(knowledge),
+            extra_config={"context_window_compression": {"sliding_window": {}}},
+        )
     except Exception as e:
         logger.error(f"[ws] Gemini connect failed: {e}")
         await ws.send_json({"type": "error", "message": _connect_error_message(e)})
         await ws.close()
         return
 
-    await ws.send_json({"type": "session_ready"})
+    try:
+        await ws.send_json({"type": "session_ready"})
+    except Exception:
+        # The browser left while Gemini was connecting: do not leave the
+        # Gemini session open.
+        await gemini.close()
+        return
 
     watchdog = SessionWatchdog(
         idle_s=VOICE_IDLE_TIMEOUT_S, max_s=VOICE_MAX_SESSION_MIN * 60
     )
 
     async def on_transcript(role: str, text: str):
-        if role == "user":
-            watchdog.touch()
+        # Both sides count as activity: a long answer must not be cut.
+        watchdog.touch()
         await ws.send_json({"type": "transcript", "role": role, "text": text})
 
     async def on_turn_complete():

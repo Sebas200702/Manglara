@@ -1,11 +1,15 @@
 import {
+  AlertCircle,
+  Loader2,
   MessageSquare,
   Mic,
   MicOff,
   Phone,
   PhoneOff,
+  RotateCcw,
   Video,
   VideoOff,
+  X,
 } from "lucide-react";
 import { Avatar } from "../../components/avatar";
 import { TranscriptPanel } from "../../components/transcript-panel";
@@ -18,31 +22,45 @@ import { SectionNav } from "../../components/section-nav";
 const connectionLabels: Record<string, string> = {
   connected: "En llamada",
   connecting: "Conectando…",
+  reconnecting: "Reconectando…",
   disconnected: "Desconectado",
-  error: "Error",
+  error: "Sin conexión",
 };
 
 export function CallScreen() {
   const {
     videoRef,
     avatarContainerRef,
+    avatarStatus,
     avatarState,
     connection,
     inCall,
     error,
     transcripts,
     loading,
+    ending,
     chatOpen,
     micEnabled,
     cameraEnabled,
+    cameraAvailable,
     setChatOpen,
     toggleMic,
     toggleCamera,
     startCall,
     endCall,
+    dismissError,
   } = useCallScreen();
 
-  const statusLabel = connectionLabels[connection] ?? connection;
+  const statusLabel = inCall
+    ? (connectionLabels[connection] ?? connection)
+    : loading
+      ? "Conectando…"
+      : "Listo para hablar";
+  const cameraLabel = !cameraAvailable
+    ? "Cámara no disponible"
+    : cameraEnabled
+      ? "Apagar cámara"
+      : "Encender cámara";
 
   return (
     <div className="h-dvh flex flex-col bg-neutral-50 font-montserrat overflow-hidden select-none relative">
@@ -64,6 +82,8 @@ export function CallScreen() {
           />
           {/* Status Indicator */}
           <span
+            role="status"
+            aria-live="polite"
             className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition-all border ${
               inCall
                 ? connection === "connected"
@@ -73,6 +93,7 @@ export function CallScreen() {
             }`}
           >
             <span
+              aria-hidden
               className={`size-2 rounded-full ${
                 inCall
                   ? connection === "connected"
@@ -81,7 +102,8 @@ export function CallScreen() {
                   : "bg-brand-400"
               }`}
             />
-            <span className="hidden sm:inline">{inCall ? statusLabel : "Listo para hablar"}</span>
+            {/* Visually hidden on mobile, but still announced. */}
+            <span className="sr-only sm:not-sr-only">{statusLabel}</span>
           </span>
         </div>
       </header>
@@ -104,6 +126,7 @@ export function CallScreen() {
             <div className="size-full z-10 relative">
               <Avatar
                 state={avatarState}
+                status={avatarStatus}
                 containerRef={avatarContainerRef}
               />
             </div>
@@ -129,7 +152,9 @@ export function CallScreen() {
               {!cameraEnabled && (
                 <div className="flex size-full flex-col items-center justify-center gap-1 bg-neutral-150 text-neutral-400">
                   <VideoOff className="size-5" aria-hidden />
-                  <span className="text-[8px] font-extrabold uppercase tracking-wider">Cámara apagada</span>
+                  <span className="text-[8px] font-extrabold uppercase tracking-wider">
+                    {cameraAvailable ? "Cámara apagada" : "Solo audio"}
+                  </span>
                 </div>
               )}
                <div className="absolute bottom-1.5 left-1.5 rounded bg-navy-600/80 backdrop-blur-md px-2 py-0.5 text-[8px] font-bold text-white border border-navy-500/10">
@@ -141,11 +166,34 @@ export function CallScreen() {
           {/* Floating controls dock overlay (aligned to bottom) */}
           <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-3 w-full max-w-sm sm:max-w-md px-4 z-20">
             {error && (
-              <p className="text-center text-xs text-white bg-status-error px-4 py-2 rounded-xl shadow-lg border border-status-error/20 font-bold animate-pulse">
-                {error}
-              </p>
+              <div
+                role="alert"
+                className="flex w-full items-start gap-2 rounded-xl border border-status-error/20 bg-status-error px-3 py-2 text-xs font-bold text-white shadow-lg"
+              >
+                <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                <p className="flex-1 leading-snug">{error}</p>
+                {!inCall && (
+                  <button
+                    type="button"
+                    onClick={() => void startCall()}
+                    disabled={loading}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-white/20 px-2 py-1 text-[11px] font-black uppercase tracking-wide hover:bg-white/30 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    <RotateCcw className="size-3.5" aria-hidden />
+                    Reintentar
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={dismissError}
+                  aria-label="Cerrar aviso"
+                  title="Cerrar aviso"
+                  className="shrink-0 rounded-lg p-1 hover:bg-white/20 cursor-pointer"
+                >
+                  <X className="size-3.5" aria-hidden />
+                </button>
+              </div>
             )}
-
 
             <div className="flex items-center gap-3 rounded-full border border-brand-200/50 bg-white/90 backdrop-blur-md px-5 py-3 shadow-xl transition-all">
               {/* Mic toggle */}
@@ -171,9 +219,10 @@ export function CallScreen() {
               <button
                 type="button"
                 onClick={toggleCamera}
-                title={cameraEnabled ? "Apagar cámara" : "Encender cámara"}
-                aria-label={cameraEnabled ? "Apagar cámara" : "Encender cámara"}
-                className={`flex size-11 items-center justify-center rounded-full transition-all cursor-pointer hover:scale-105 active:scale-95 ${
+                disabled={!cameraAvailable}
+                title={cameraLabel}
+                aria-label={cameraLabel}
+                className={`flex size-11 items-center justify-center rounded-full transition-all cursor-pointer hover:scale-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100 ${
                   cameraEnabled
                     ? "bg-neutral-50 border border-neutral-200 text-navy-600 hover:bg-neutral-100 shadow-2xs"
                     : "bg-status-error text-white hover:bg-status-error/90 shadow-md shadow-status-error/20"
@@ -191,7 +240,9 @@ export function CallScreen() {
                 type="button"
                 onClick={() => setChatOpen((v) => !v)}
                 title="Transcripción"
-                aria-label="Abrir transcripción"
+                aria-label={chatOpen ? "Cerrar transcripción" : "Abrir transcripción"}
+                aria-expanded={chatOpen}
+                aria-controls="call-transcript"
                 className={`relative flex size-11 items-center justify-center rounded-full transition-all cursor-pointer hover:scale-105 active:scale-95 ${
                   chatOpen
                     ? "bg-brand-500 text-white border border-brand-400/20 shadow-md shadow-brand-500/20"
@@ -216,17 +267,22 @@ export function CallScreen() {
                   disabled={loading}
                   className="flex h-11 items-center gap-2 rounded-full bg-brand-500 hover:bg-brand-600 px-5 text-xs font-black text-white transition-all cursor-pointer hover:scale-105 active:scale-95 shadow-md shadow-brand-500/25 tracking-wide uppercase disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  <Phone className="size-4 shrink-0 animate-pulse" />
+                  {loading ? (
+                    <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+                  ) : (
+                    <Phone className="size-4 shrink-0 animate-pulse" aria-hidden />
+                  )}
                   <span>{loading ? "Conectando…" : "Llamar"}</span>
                 </button>
               ) : (
                 <button
                   type="button"
                   onClick={endCall}
-                  className="flex h-11 items-center gap-2 rounded-full bg-status-error hover:bg-status-error/90 px-5 text-xs font-black text-white transition-all cursor-pointer hover:scale-105 active:scale-95 shadow-md shadow-status-error/25 tracking-wide uppercase"
+                  disabled={ending}
+                  className="flex h-11 items-center gap-2 rounded-full bg-status-error hover:bg-status-error/90 px-5 text-xs font-black text-white transition-all cursor-pointer hover:scale-105 active:scale-95 shadow-md shadow-status-error/25 tracking-wide uppercase disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  <PhoneOff className="size-4 shrink-0" />
-                  <span>Colgar</span>
+                  <PhoneOff className="size-4 shrink-0" aria-hidden />
+                  <span>{ending ? "Saliendo…" : "Colgar"}</span>
                 </button>
               )}
             </div>
@@ -235,7 +291,7 @@ export function CallScreen() {
 
         {/* Sidebar Transcript Panel */}
         {chatOpen && (
-          <aside className="flex w-72 md:w-80 shrink-0 flex-col border-l border-neutral-200/80 bg-white z-20 relative h-full overflow-hidden animate-panel-slide-in">
+          <aside id="call-transcript" aria-label="Transcripción de la llamada" className="flex w-72 md:w-80 shrink-0 flex-col border-l border-neutral-200/80 bg-white z-20 relative h-full overflow-hidden animate-panel-slide-in">
             <TranscriptPanel entries={transcripts} />
           </aside>
         )}

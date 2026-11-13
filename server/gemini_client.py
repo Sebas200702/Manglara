@@ -5,7 +5,12 @@ from typing import AsyncIterator, Callable, Any
 from google import genai
 from google.genai import types
 
-from config import GEMINI_API_KEY, GEMINI_LIVE_MODEL, GEMINI_VOICE_NAME
+from config import (
+    GEMINI_API_KEY,
+    GEMINI_LIVE_MODEL,
+    GEMINI_MEDIA_RESOLUTION,
+    GEMINI_VOICE_NAME,
+)
 from prompt import SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -50,6 +55,11 @@ class GeminiLiveClient:
             "system_instruction": {
                 "parts": [{"text": system_prompt or SYSTEM_PROMPT}]
             },
+            **(
+                {"media_resolution": GEMINI_MEDIA_RESOLUTION}
+                if GEMINI_MEDIA_RESOLUTION
+                else {}
+            ),
             **(extra_config or {}),
         }
 

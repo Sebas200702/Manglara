@@ -2,7 +2,7 @@ import logging
 
 from google import genai
 
-from config import GEMINI_API_KEY, GEMINI_DIGEST_MODEL
+from config import GEMINI_API_KEY, GEMINI_DIGEST_MODEL, VOICE_PRELOAD_CHARS
 from pdf.sources import CURRENT_SOURCES
 from db import get_document_chunks, list_documents, update_document_digest
 
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 # Digests get preloaded into the Live session's system prompt, so the total
 # budget matters more than per-document size: keep it a few thousand tokens.
 MAX_SOURCE_CHARS = 250_000
-MAX_KNOWLEDGE_CHARS = 60_000
+MAX_KNOWLEDGE_CHARS = VOICE_PRELOAD_CHARS
 
 # Documents outside the curriculum (reports, needs assessments, market studies)
 # are complementary context, so their digests are kept short: several of them

@@ -2,20 +2,37 @@ import asyncio
 import base64
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from config import CORS_ALLOW_ORIGINS, MEETING_WEB_URL, PORT
+from config import (
+    CORS_ALLOW_ORIGINS,
+    LOG_TRANSCRIPTS,
+    MEETING_WEB_URL,
+    MEETINGS_ENABLED,
+    PORT,
+    VOICE_ALLOWED_ORIGINS,
+    VOICE_MAX_SESSIONS,
+    VOICE_IDLE_TIMEOUT_S,
+    VOICE_MAX_NEW_SESSIONS_PER_MIN,
+    VOICE_MAX_SESSION_MIN,
+    VOICE_MAX_SESSIONS_PER_IP,
+)
 from db import list_active_documents
 from gemini_client import GeminiLiveClient
 from knowledge.router import auth_router, router as knowledge_router
 from meeting.router import router as meeting_router, ws_router as meeting_ws_router
+from observability import init_error_tracking
+from process_layout import layout_error, workers_from_env
 from pdf.digest import build_knowledge_context
 from pdf.retrieval import retrieve_context
 from pdf.router import router as pdf_router
 from prompt import CONTEXT_NOTE, LANGUAGE_REMINDER, build_system_prompt
+from voice_admission import BUSY_MESSAGE, ORIGIN_MESSAGE, VoiceAdmission
+from voice_watchdog import SessionWatchdog
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,6 +40,11 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("server")
+init_error_tracking()
+
+_layout_error = layout_error(workers_from_env(os.environ), MEETINGS_ENABLED)
+if _layout_error:
+    raise RuntimeError(_layout_error)
 
 # Eager RAG: fire retrieval while the user is still speaking so the context
 # reaches Gemini before it starts answering.
@@ -61,21 +83,72 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(knowledge_router)
 app.include_router(pdf_router)
-app.include_router(meeting_router)
-app.include_router(meeting_ws_router)
+if MEETINGS_ENABLED:
+    app.include_router(meeting_router)
+    # Same API under /api so the web reaches it through its own origin (Caddy
+    # proxies /api/*) and the admin cookie stays first-party.
+    app.include_router(meeting_router, prefix="/api")
+    app.include_router(meeting_ws_router)
+else:
+    logger.info("[startup] API de reuniones desactivada (MEETINGS_ENABLED=false)")
+
+voice_admission = VoiceAdmission(
+    max_sessions=VOICE_MAX_SESSIONS,
+    max_per_ip=VOICE_MAX_SESSIONS_PER_IP,
+    max_new_per_min=VOICE_MAX_NEW_SESSIONS_PER_MIN,
+    allowed_origins=VOICE_ALLOWED_ORIGINS,
+)
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health():
     return {"ok": True}
+
+
+CONNECT_FAILED_MESSAGE = "No pude conectar con Manglara. Intenta de nuevo en un momento."
+
+
+def _connect_error_message(error: Exception) -> str:
+    """User-facing text for a failed Gemini connect. Quota exhaustion reads as
+    "busy" (it clears in a minute); raw provider errors never reach the user."""
+    text = str(error).lower()
+    if "quota" in text or "resource has been exhausted" in text or "resource_exhausted" in text:
+        return BUSY_MESSAGE
+    return CONNECT_FAILED_MESSAGE
+
+
+async def _reject(ws: WebSocket, message: str):
+    await ws.send_json({"type": "error", "message": message})
+    await ws.close()
 
 
 @app.websocket("/ws/voice")
 async def ws_voice(ws: WebSocket):
     await ws.accept()
-    logger.info("[ws] Client connected")
+
+    if not voice_admission.origin_allowed(ws.headers.get("origin")):
+        logger.warning("[ws] origin rejected: %s", ws.headers.get("origin"))
+        await _reject(ws, ORIGIN_MESSAGE)
+        return
+
+    ip = ws.client.host if ws.client else ""
+    reason = voice_admission.try_acquire(ip)
+    if reason:
+        logger.warning("[ws] voice session rejected (active=%d)", voice_admission.active)
+        await _reject(ws, reason)
+        return
+
+    try:
+        await _voice_session(ws)
+    finally:
+        voice_admission.release(ip)
+
+
+async def _voice_session(ws: WebSocket):
+    logger.info("[ws] Client connected (active=%d)", voice_admission.active)
 
     gemini = GeminiLiveClient()
+    gemini.log_transcripts = LOG_TRANSCRIPTS
 
     try:
         active = await list_active_documents()
@@ -94,19 +167,38 @@ async def ws_voice(ws: WebSocket):
         knowledge = ""
 
     try:
-        await gemini.connect(system_prompt=build_system_prompt(knowledge))
+        # Without compression Gemini Live ends audio+video sessions after about
+        # two minutes and every reconnect pays the whole system prompt again;
+        # the sliding window keeps one session alive (same as the meeting bot).
+        await gemini.connect(
+            system_prompt=build_system_prompt(knowledge),
+            extra_config={"context_window_compression": {"sliding_window": {}}},
+        )
     except Exception as e:
         logger.error(f"[ws] Gemini connect failed: {e}")
-        await ws.send_json({"type": "error", "message": str(e)})
+        await ws.send_json({"type": "error", "message": _connect_error_message(e)})
         await ws.close()
         return
 
-    await ws.send_json({"type": "session_ready"})
+    try:
+        await ws.send_json({"type": "session_ready"})
+    except Exception:
+        # The browser left while Gemini was connecting: do not leave the
+        # Gemini session open.
+        await gemini.close()
+        return
+
+    watchdog = SessionWatchdog(
+        idle_s=VOICE_IDLE_TIMEOUT_S, max_s=VOICE_MAX_SESSION_MIN * 60
+    )
 
     async def on_transcript(role: str, text: str):
+        # Both sides count as activity: a long answer must not be cut.
+        watchdog.touch()
         await ws.send_json({"type": "transcript", "role": role, "text": text})
 
     async def on_turn_complete():
+        watchdog.touch()
         await ws.send_json({"type": "turn_complete"})
 
     async def on_interrupted():
@@ -143,6 +235,7 @@ async def ws_voice(ws: WebSocket):
         rag["debounce"] = None
 
     async def on_user_partial(text: str):
+        watchdog.touch()
         if not lang["sent"] and lang["turn"] % LANG_REMIND_EVERY == 0:
             lang["sent"] = True
             asyncio.create_task(remind_language())
@@ -217,12 +310,35 @@ async def ws_voice(ws: WebSocket):
         except Exception as e:
             logger.error(f"[gemini] Error in gemini_to_ws: {e}")
 
+    # Whichever side ends first ends the session. With gather, a browser that
+    # disconnected left gemini_to_ws blocked in receive() and the Gemini
+    # session (quota) alive until Gemini itself closed it.
+    async def end_when_unused():
+        message = await watchdog.wait()
+        logger.info("[ws] ending unused session: %s", message)
+        # The client shows the message and does not auto-reconnect.
+        await ws.send_json({"type": "session_ended", "message": message})
+
+    tasks = [
+        asyncio.create_task(ws_to_gemini()),
+        asyncio.create_task(gemini_to_ws()),
+        asyncio.create_task(end_when_unused()),
+    ]
     try:
-        await asyncio.gather(ws_to_gemini(), gemini_to_ws())
+        _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
     except Exception as e:
         logger.error(f"[ws] Session error: {e}")
     finally:
+        for task in tasks:
+            task.cancel()
         await gemini.close()
+        try:
+            await ws.close()
+        except Exception:
+            pass  # already closed by the client
         logger.info("[ws] Connection closed")
 
 

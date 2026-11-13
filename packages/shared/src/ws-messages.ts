@@ -12,6 +12,9 @@ export type ServerToClientMessage =
    *  the turn. Any audio already sent ahead of playback is stale. */
   | { type: "interrupted" }
   | { type: "session_ready" }
+  /** The server closed the session on purpose (idle or max duration). The
+   *  client shows the message and must not auto-reconnect. */
+  | { type: "session_ended"; message: string }
   | { type: "error"; message: string };
 
 export type AvatarState = "idle" | "listening" | "thinking" | "speaking";

@@ -5,8 +5,19 @@ import type {
 } from "@manglara/shared";
 import { AudioPlaybackQueue } from "./audio-playback-queue.js";
 import { backendWsOrigin } from "./backend-url";
+import {
+  CALL_ERROR_MESSAGES,
+  CallError,
+  describeMediaError,
+  describeServerError,
+} from "./call-errors";
 
-export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
+export type ConnectionState =
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "error";
 
 export interface VoiceClientCallbacks {
   onConnectionChange?: (state: ConnectionState) => void;
@@ -16,12 +27,46 @@ export interface VoiceClientCallbacks {
   onInterrupted?: () => void;
   onSpeakingChange?: (speaking: boolean) => void;
   onSessionReady?: () => void;
+  /** The server ended the call on purpose (idle / max duration). */
+  onSessionEnded?: (message: string) => void;
   onError?: (message: string) => void;
   onVideoStream?: (stream: MediaStream | null) => void;
   /** The live connection dropped; an automatic reconnection attempt is starting. */
   onReconnecting?: (attempt: number) => void;
   /** The connection was successfully restored after a drop. */
   onReconnected?: () => void;
+  /** Every reconnection attempt failed; the call can't continue. */
+  onReconnectFailed?: () => void;
+}
+
+const AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+  echoCancellation: true,
+  noiseSuppression: true,
+};
+
+const VIDEO_CONSTRAINTS: MediaTrackConstraints = {
+  width: { ideal: 1280 },
+  height: { ideal: 720 },
+  facingMode: "user",
+};
+
+/**
+ * Microphone + camera, with the camera optional: if the combined request fails
+ * (no camera, camera denied or busy) retry with the microphone alone. Only a
+ * microphone failure ends the call, and it's reported as a Spanish CallError.
+ */
+export async function requestCallMedia(
+  getUserMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream>
+): Promise<MediaStream> {
+  try {
+    return await getUserMedia({ audio: AUDIO_CONSTRAINTS, video: VIDEO_CONSTRAINTS });
+  } catch {
+    try {
+      return await getUserMedia({ audio: AUDIO_CONSTRAINTS });
+    } catch (err) {
+      throw new CallError(describeMediaError(err));
+    }
+  }
 }
 
 function workletBlobUrl(): string {
@@ -100,7 +145,10 @@ function wsUrl(path = "/ws/voice"): string {
   return `${backendWsOrigin()}${path}`;
 }
 
-const VIDEO_FRAME_INTERVAL_MS = 1500;
+// Every frame is billed as image tokens by Gemini Live, and video was the
+// largest share of each session's quota: one frame every 3 s is enough for
+// Manglara to see what the person shows her.
+const VIDEO_FRAME_INTERVAL_MS = 3000;
 /**
  * Capture size sent to the model. Kept at the previous canvas dimensions, including
  * the 16:9 -> 4:3 squash the old `drawImage` did, so what Gemini sees is unchanged.
@@ -160,6 +208,8 @@ export class VoiceClient {
   private readonly reconnectMaxDelayMs = 15000;
   /** Clears the "Reconectado" notice after a moment. */
   private reconnectedNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** How long to wait for the server's `session_ready` before giving up. */
+  private readonly sessionReadyTimeoutMs = 20000;
 
   constructor(callbacks: VoiceClientCallbacks = {}) {
     this.callbacks = callbacks;
@@ -188,55 +238,104 @@ export class VoiceClient {
     this.active = true;
   }
 
+  /** False when the call runs audio-only (no camera, or camera refused). */
+  get hasCamera(): boolean {
+    return (this.micStream?.getVideoTracks().length ?? 0) > 0;
+  }
+
   getVideoCanvas(): HTMLCanvasElement | null {
     return this.canvas;
   }
 
+  /**
+   * Opens the socket and resolves once the server says the AI session is ready
+   * (`session_ready`). The server accepts the socket before it knows whether it
+   * can serve the call, so an `error` before that point (origin rejected, busy,
+   * upstream failure) rejects with a user-facing CallError instead.
+   */
   async connect(): Promise<void> {
     if (this.ws?.readyState === WebSocket.OPEN) return;
 
     // A fresh connect is never an intentional close until disconnect() says so.
     this.intentionalClose = false;
 
-    this.callbacks.onConnectionChange?.("connecting");
+    // While reconnecting, keep showing "reconnecting" rather than "connecting".
+    if (!this.reconnecting) this.callbacks.onConnectionChange?.("connecting");
 
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(wsUrl());
+      let settled = false;
+
+      const fail = (error: CallError) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        // Detach first so closing this socket isn't mistaken for a mid-call drop.
+        ws.onclose = null;
+        ws.onerror = null;
+        ws.onmessage = null;
+        if (this.ws === ws) this.ws = null;
+        ws.close();
+        if (!this.reconnecting) this.callbacks.onConnectionChange?.("error");
+        reject(error);
+      };
+
+      const timeout = setTimeout(
+        () => fail(new CallError(CALL_ERROR_MESSAGES.timeout)),
+        this.sessionReadyTimeoutMs
+      );
 
       ws.onopen = () => {
         this.ws = ws;
-        this.callbacks.onConnectionChange?.("connected");
-        resolve();
       };
 
       ws.onmessage = (event) => {
+        let msg: ServerToClientMessage;
         try {
-          const msg = JSON.parse(event.data as string) as ServerToClientMessage;
-          // Deliberately NOT logged per message: audio arrives continuously and a
-          // console.log per chunk is itself a main-thread stall (worse with DevTools
-          // open), which hitches the avatar's render loop. Use `__lipsyncLog()` for
-          // timing questions - it samples at 4 Hz instead.
-          this.handleMessage(msg);
+          msg = JSON.parse(event.data as string) as ServerToClientMessage;
         } catch {
-          this.callbacks.onError?.("Invalid server message");
+          // A single malformed frame isn't worth interrupting the call for.
+          return;
         }
+        if (!settled) {
+          if (msg.type === "error") {
+            fail(new CallError(describeServerError(msg.message)));
+            return;
+          }
+          if (msg.type === "session_ready") {
+            settled = true;
+            clearTimeout(timeout);
+            // Only a session the server accepted refills the retry budget.
+            this.reconnectAttempts = 0;
+            this.callbacks.onConnectionChange?.("connected");
+            this.callbacks.onSessionReady?.();
+            resolve();
+            return;
+          }
+        }
+        // Deliberately NOT logged per message: audio arrives continuously and a
+        // console.log per chunk is itself a main-thread stall (worse with DevTools
+        // open), which hitches the avatar's render loop. Use `__lipsyncLog()` for
+        // timing questions - it samples at 4 Hz instead.
+        this.handleMessage(msg);
       };
 
-      ws.onerror = () => {
-        this.callbacks.onConnectionChange?.("error");
-        this.callbacks.onError?.("WebSocket connection failed");
-        reject(new Error("WebSocket connection failed"));
-      };
+      // Once the session is up, a socket error is followed by `onclose`, which
+      // owns the drop/reconnect handling; `fail` is a no-op then.
+      ws.onerror = () => fail(new CallError(CALL_ERROR_MESSAGES.network));
 
       ws.onclose = () => {
-        this.ws = null;
-        if (this.intentionalClose) {
+        if (this.ws === ws) this.ws = null;
+        if (!settled) {
+          fail(new CallError(CALL_ERROR_MESSAGES.network));
+          return;
+        }
+        if (this.intentionalClose || !this.active) {
           this.callbacks.onConnectionChange?.("disconnected");
           return;
         }
         // Unexpected drop. Stay in the call and try to restore the link.
-        this.callbacks.onConnectionChange?.("disconnected");
-        if (this.active) this.scheduleReconnect();
+        this.scheduleReconnect();
       };
     });
   }
@@ -251,7 +350,9 @@ export class VoiceClient {
       await this.connect();
       await this.startMic();
       this.reconnecting = false;
-      this.reconnectAttempts = 0;
+      // reconnectAttempts is reset on `session_ready`, not here: a server
+      // that is full accepts the socket and then rejects it, and resetting on
+      // open would retry every second forever.
       this.callbacks.onReconnected?.();
     } catch {
       // `scheduleReconnect()` is guarded while this attempt is in flight. Clear
@@ -266,16 +367,19 @@ export class VoiceClient {
   private scheduleReconnect(): void {
     if (this.reconnecting || this.reconnectTimer) return;
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.callbacks.onError?.("No se pudo restablecer la conexión");
+      this.callbacks.onConnectionChange?.("error");
+      this.callbacks.onReconnectFailed?.();
       return;
     }
     this.reconnecting = true;
     this.reconnectAttempts += 1;
+    this.callbacks.onConnectionChange?.("reconnecting");
     this.callbacks.onReconnecting?.(this.reconnectAttempts);
-    const delay = Math.min(
-      this.reconnectBaseMs * 2 ** (this.reconnectAttempts - 1),
-      this.reconnectMaxDelayMs
-    );
+    // Jitter (50-100% of the backoff) so clients dropped together by a backend
+    // restart do not all reconnect in the same instant.
+    const delay =
+      Math.min(this.reconnectBaseMs * 2 ** (this.reconnectAttempts - 1), this.reconnectMaxDelayMs) *
+      (0.5 + Math.random() * 0.5);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       void this.reconnect();
@@ -311,17 +415,24 @@ export class VoiceClient {
         this.callbacks.onInterrupted?.();
         break;
       case "session_ready":
+        this.reconnectAttempts = 0;
         this.callbacks.onSessionReady?.();
         break;
+      case "session_ended":
+        // The close that follows is intended: no reconnect.
+        this.intentionalClose = true;
+        this.active = false;
+        this.callbacks.onSessionEnded?.(msg.message);
+        break;
       case "error":
-        this.callbacks.onError?.(msg.message);
+        this.callbacks.onError?.(describeServerError(msg.message));
         break;
     }
   }
 
   async startMic(): Promise<void> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      throw new Error("Not connected");
+      throw new CallError(CALL_ERROR_MESSAGES.network);
     }
 
     // Already initialised (e.g. after a reconnect): just make sure the audio
@@ -340,20 +451,14 @@ export class VoiceClient {
     await this.micCtx.resume();
 
     await this.micCtx.audioWorklet.addModule(workletBlobUrl());
-    console.log("[voice] AudioWorklet loaded, context rate:", this.micCtx.sampleRate);
 
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-      },
-      video: {
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        facingMode: "user",
-      },
-    });
-    console.log("[voice] getUserMedia OK, audio track:", !!stream.getAudioTracks()[0]);
+    // Missing on insecure origins (plain http) and very old browsers.
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new CallError(CALL_ERROR_MESSAGES.mediaUnsupported);
+    }
+    const stream = await requestCallMedia((constraints) =>
+      navigator.mediaDevices.getUserMedia(constraints)
+    );
 
     this.micStream = stream;
 
@@ -364,10 +469,8 @@ export class VoiceClient {
     source.connect(worklet);
 
     worklet.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
-      if (this.ws?.readyState !== WebSocket.OPEN) {
-        console.warn("[voice] ws not open, dropping audio chunk");
-        return;
-      }
+      // Dropped while reconnecting; the pipeline resumes once the socket is back.
+      if (this.ws?.readyState !== WebSocket.OPEN) return;
       // While Manglara is speaking, don't forward mic audio: with an external
       // speaker her own voice gets captured and echoed back to the model, so she
       // hears herself and replies in a loop. Reopens shortly after she finishes.
@@ -381,7 +484,6 @@ export class VoiceClient {
     };
 
     this.startVideo(stream);
-    console.log("[voice] mic started, sending audio chunks to server");
   }
 
   setMicEnabled(enabled: boolean): void {

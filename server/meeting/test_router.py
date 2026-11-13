@@ -10,6 +10,7 @@ import asyncio
 from fastapi import FastAPI, WebSocketDisconnect
 from fastapi.testclient import TestClient
 
+from knowledge.auth import COOKIE_NAME, make_session_token
 from meeting import router as router_mod
 
 _passed = 0
@@ -48,7 +49,20 @@ def main():
     app.include_router(router_mod.router)
     app.include_router(router_mod.ws_router)
 
+    with TestClient(app) as anon:
+        print("sin sesión de admin")
+        for method, path in (("post", "/meetings/join"), ("get", "/meetings"), ("get", "/meetings/x"),
+                             ("post", "/meetings/x/leave"), ("post", "/meetings/x/brain/start"),
+                             ("post", "/meetings/x/brain/stop"), ("post", "/meetings/x/mic"),
+                             ("post", "/meetings/x/cam")):
+            kwargs = {"json": {"input": "abc-defg-hij", "enabled": True}} if method == "post" else {}
+            r = getattr(anon, method)(path, **kwargs)
+            check(r.status_code == 401, f"{method.upper()} {path} sin sesión: 401")
+        anon.cookies.set(COOKIE_NAME, "forged.token")
+        check(anon.get("/meetings").status_code == 401, "cookie falsa: 401")
+
     with TestClient(app) as client:
+        client.cookies.set(COOKIE_NAME, make_session_token())
         print("join")
         r = client.post("/meetings/join", json={"input": "https://zoom.us/j/81234567890"})
         check(r.status_code == 202, "202 al unirse")
@@ -81,6 +95,17 @@ def main():
                 check(False, "debía rechazar")
             except WebSocketDisconnect as e:
                 check(e.code == 4403, f"rechaza {label}")
+
+        print("WS de la UI exige sesión")
+        with client.websocket_connect(f"/ws/meetings/{first}") as ws:
+            check(ws.receive_json()["type"] == "state", "con sesión recibe el estado")
+        with TestClient(app) as anon_ws:
+            try:
+                with anon_ws.websocket_connect(f"/ws/meetings/{first}") as ws:
+                    ws.receive_json()
+                check(False, "debía rechazar")
+            except WebSocketDisconnect as e:
+                check(e.code == 4401, "sin sesión: cierra con 4401")
 
         print("leave libera el cupo")
         r = client.post(f"/meetings/{first}/leave")

@@ -1,6 +1,8 @@
 import type { AvatarState } from "@manglara/shared";
 import { useEffect, useRef, useState } from "react";
+import type { AvatarStatus } from "../../components/avatar";
 import { AvatarController } from "../../components/avatar/avatar-controller";
+import { CALL_ERROR_MESSAGES, toUserMessage } from "../../lib/call-errors";
 import { VoiceClient, type ConnectionState } from "../../lib/voice-client";
 import { useCallScreenStore } from "./call-screen-store";
 
@@ -20,7 +22,10 @@ export function useCallScreen() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const avatarContainerRef = useRef<HTMLDivElement | null>(null);
   const controllerRef = useRef<AvatarController | null>(null);
-  const [avatarReady, setAvatarReady] = useState(false);
+  const [avatarStatus, setAvatarStatus] = useState<AvatarStatus>("loading");
+  /** False when the call fell back to audio-only (no camera, or camera refused). */
+  const [cameraAvailable, setCameraAvailable] = useState(true);
+  const [ending, setEnding] = useState(false);
 
   const connection = useCallScreenStore((s) => s.connection);
   const speaking = useCallScreenStore((s) => s.speaking);
@@ -54,21 +59,24 @@ export function useCallScreen() {
     const node = avatarContainerRef.current;
     if (!node) return;
 
+    setAvatarStatus("loading");
     const controller = new AvatarController(node, {
-      onReady: () => setAvatarReady(true),
+      onReady: () => setAvatarStatus("ready"),
       onSpeakingChange: (isSpeaking) => {
         setSpeaking(isSpeaking);
         if (isSpeaking) setThinking(false);
       },
-      onError: (err) => console.error("[avatar]", err),
     });
     controllerRef.current = controller;
-    void controller.init().catch(() => {});
+    // Without the avatar the call still works, only without lip-sync.
+    controller.init().catch((err: unknown) => {
+      console.error("[avatar] failed to load", err);
+      setAvatarStatus("failed");
+    });
 
     return () => {
       controller.dispose();
       controllerRef.current = null;
-      setAvatarReady(false);
     };
   }, [setSpeaking, setThinking]);
 
@@ -84,7 +92,17 @@ export function useCallScreen() {
     clientRef.current?.setInputSuppressed(speaking);
   }, [speaking]);
 
+  /** Tears the call down. Leaves the error banner alone. */
+  const teardown = () => {
+    clientRef.current?.disconnect();
+    clientRef.current = null;
+    controllerRef.current?.stopStream();
+    resetCallState();
+    setCameraAvailable(true);
+  };
+
   const startCall = async () => {
+    if (loading) return;
     setError(null);
     setLoading(true);
     clearTranscripts();
@@ -116,7 +134,23 @@ export function useCallScreen() {
       onSessionReady: () => {
         setThinking(false);
       },
+      onSessionEnded: (message) => {
+        endCall();
+        setError(message);
+      },
       onError: (message) => setError(message),
+      onReconnecting: () => {
+        // Whatever Manglara was saying went down with the socket.
+        controllerRef.current?.interrupt();
+        setSpeaking(false);
+        setThinking(false);
+      },
+      onReconnected: () => setError(null),
+      onReconnectFailed: () => {
+        if (clientRef.current !== client) return;
+        teardown();
+        setError(CALL_ERROR_MESSAGES.reconnectFailed);
+      },
       onVideoStream: (stream) => {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
@@ -127,45 +161,51 @@ export function useCallScreen() {
     clientRef.current = client;
 
     try {
+      // Resolves only once the server's AI session is ready: a refusal (busy,
+      // origin, upstream failure) rejects here, before the mic is ever opened.
       await client.connect();
       await client.startMic();
+
+      if (!client.hasCamera) {
+        setCameraAvailable(false);
+        setCameraEnabled(false);
+      }
 
       // If the avatar loaded, let TalkingHead own playback + lip-sync.
       // Otherwise fall back to VoiceClient's built-in audio playback.
       const controller = controllerRef.current;
-      console.log(
-        "[avatar] startCall: controller?",
-        !!controller,
-        "isReady?",
-        controller?.isReady
-      );
       if (controller?.isReady) {
         await controller.startStream();
         client.setAudioChunkSink((pcm) => controller.feedAudio(pcm));
-        console.log("[avatar] audio sink wired to TalkingHead");
-      } else {
-        console.warn(
-          "[avatar] controller not ready → audio falls back to AudioPlaybackQueue (no lip-sync)"
-        );
       }
 
+      // From here on an unexpected drop auto-reconnects instead of failing.
+      client.markActive();
       setInCall(true);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Error al iniciar";
-      setError(message);
+      // Release mic/cam and the socket so nothing is left half-open.
       client.disconnect();
-      clientRef.current = null;
+      if (clientRef.current === client) clientRef.current = null;
+      setCameraAvailable(true);
+      setCameraEnabled(true);
+      setError(toUserMessage(err));
     } finally {
       setLoading(false);
     }
   };
 
   const endCall = () => {
-    clientRef.current?.disconnect();
-    clientRef.current = null;
-    controllerRef.current?.stopStream();
-    resetCallState();
+    if (ending) return;
+    setEnding(true);
+    setError(null);
+    // Let "Saliendo…" paint before the (synchronous) teardown runs.
+    setTimeout(() => {
+      teardown();
+      setEnding(false);
+    }, 0);
   };
+
+  const dismissError = () => setError(null);
 
   const toggleMic = () => {
     const next = !micEnabled;
@@ -174,6 +214,7 @@ export function useCallScreen() {
   };
 
   const toggleCamera = () => {
+    if (!cameraAvailable) return;
     const next = !cameraEnabled;
     clientRef.current?.setCameraEnabled(next);
     setCameraEnabled(next);
@@ -182,20 +223,23 @@ export function useCallScreen() {
   return {
     videoRef,
     avatarContainerRef,
-    avatarReady,
+    avatarStatus,
     avatarState,
     connection,
     inCall,
     error,
     transcripts,
     loading,
+    ending,
     chatOpen,
     micEnabled,
     cameraEnabled,
+    cameraAvailable,
     setChatOpen,
     toggleMic,
     toggleCamera,
     startCall,
     endCall,
+    dismissError,
   };
 }

@@ -61,14 +61,50 @@
 	handle {
 		root * {{.DIST_DIR}}
 
+		# Cache: los assets con hash de Vite son inmutables; el resto de
+		# archivos de public/ (avatar, video, audio, logos) se revalidan cada
+		# dia via ETag; el HTML (index.html y fallback de la SPA) nunca se
+		# cachea sin revalidar, para que un deploy nuevo se vea al instante.
+		@hashed path /assets/*
+		header @hashed Cache-Control "public, max-age=31536000, immutable"
+
+		@public_media path *.glb *.mp4 *.mp3 *.svg *.png /headaudio/* /logos/*
+		header @public_media Cache-Control "public, max-age=86400"
+
+		header ?Cache-Control "no-cache"
+
+		# El GLB del avatar no trae un MIME conocido (sale como
+		# octet-stream y no se comprime); con este tipo entra en el match de
+		# encode y baja de ~3.5 MB a ~1.9 MB.
+		@glb path *.glb
+		header @glb Content-Type model/gltf-binary
+
 		file_server {
 			hide .git
 			hide .env*
 		}
 
+		# zstd primero: Caddy usa el primer formato cuando el cliente no tiene
+		# preferencia. Lista = los tipos del match por defecto de Caddy que este
+		# sitio sirve, mas model/gltf-binary.
 		encode {
-			gzip
 			zstd
+			gzip
+			match {
+				header Content-Type application/javascript*
+				header Content-Type application/json*
+				header Content-Type application/manifest+json*
+				header Content-Type application/wasm*
+				header Content-Type application/xml*
+				header Content-Type application/xhtml+xml*
+				header Content-Type application/x-javascript*
+				header Content-Type font/*
+				header Content-Type image/svg+xml*
+				header Content-Type image/x-icon*
+				header Content-Type image/vnd.microsoft.icon*
+				header Content-Type model/gltf-binary*
+				header Content-Type text/*
+			}
 		}
 
 		# Fallback de la SPA: /conocimiento, /reunion, /meeting/avatar...

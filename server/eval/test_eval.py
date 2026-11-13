@@ -57,6 +57,32 @@ def test_dataset():
     check(any("expected_facts" in e for e in errors),
           "answerable case without expected facts is rejected")
 
+    cited = [c for c in cases if "source" in c]
+    check(len(cited) >= 50, f"at least 50 cases cite a cartilla quote ({len(cited)})")
+    check(len(cases) >= 140, f"dataset includes the ported grounding cases ({len(cases)})")
+    check({"fr", "pt"} <= {c.get("lang") for c in cases}, "French and Portuguese cases exist")
+    base = {"category": "answerable", "question": "q", "expected_facts": ["f"],
+            "must_not": [], "notes": ""}
+    sourced = [
+        {**base, "id": "s1", "source": {"document": "D.docx", "page": 2, "quote": "q"}},
+        {**base, "id": "s2", "source": {"document": "D.docx", "page": 2}},
+        {**base, "id": "s3", "source": {"document": "", "page": 2, "quote": "q"}},
+        {**base, "id": "s4", "source": {"document": "D.docx", "page": "2", "quote": "q"}},
+        {**base, "id": "s5", "source": "D.docx"},
+        {**base, "id": "s6", "lang": "fr"},
+    ]
+    errors = dataset.validate_cases(sourced)
+    check(not any(e.startswith("case 0 ") for e in errors), "a complete source is valid")
+    check(any(e.startswith("case 1 ") and "source" in e for e in errors),
+          "a source without quote is rejected")
+    check(any(e.startswith("case 2 ") and "source" in e for e in errors),
+          "a source with an empty document is rejected")
+    check(any(e.startswith("case 3 ") and "page" in e for e in errors),
+          "a source page that is not an int is rejected")
+    check(any(e.startswith("case 4 ") and "source" in e for e in errors),
+          "a source that is not an object is rejected")
+    check(not any(e.startswith("case 5 ") for e in errors), "lang fr is accepted")
+
 
 # --- key guard ---------------------------------------------------------------
 

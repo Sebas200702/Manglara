@@ -1,4 +1,5 @@
 import logging
+import time
 
 import httpx
 
@@ -13,6 +14,19 @@ HEADERS = {
     "Content-Type": "application/json",
     "Prefer": "return=representation",
 }
+
+# Chunk rows (with parsed embeddings) per document filter. Fetching and
+# parsing every embedding on each question delayed retrieval past the moment
+# the Live model starts answering, so it answered without the cartillas.
+# Per process: with several workers, another worker's write is seen at most
+# CHUNK_CACHE_TTL_S later.
+CHUNK_CACHE_TTL_S = 120
+_chunk_cache: dict[str, tuple[float, list[dict]]] = {}
+
+
+def invalidate_chunk_cache() -> None:
+    """Drop cached chunk rows; called by every write to documents or chunks."""
+    _chunk_cache.clear()
 
 
 async def insert_document(
@@ -45,6 +59,7 @@ async def insert_document(
 
 
 async def insert_chunks(chunks: list[dict]):
+    invalidate_chunk_cache()
     if not chunks:
         return
     async with httpx.AsyncClient() as client:
@@ -52,22 +67,33 @@ async def insert_chunks(chunks: list[dict]):
         resp.raise_for_status()
 
 
-async def search_chunks(
-    document_id: str, embedding: list[float], top_k: int = 5
-) -> list[dict]:
-    """Búsqueda vectorial LOCAL en un solo documento (mismo motivo que
-    search_chunks_multi: el RPC vía REST devuelve vacíos erráticos)."""
+async def _fetch_chunk_rows(document_filter: str) -> list[dict]:
+    cached = _chunk_cache.get(document_filter)
+    if cached and time.monotonic() - cached[0] < CHUNK_CACHE_TTL_S:
+        return cached[1]
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
             f"{BASE}/chunks",
             params={
-                "document_id": f"eq.{document_id}",
+                "document_id": document_filter,
                 "select": "document_id,content,page_num,chunk_index,embedding",
             },
             headers=HEADERS,
         )
         resp.raise_for_status()
         rows = resp.json()
+    for row in rows:
+        row["embedding"] = _to_vec(row.get("embedding"))
+    _chunk_cache[document_filter] = (time.monotonic(), rows)
+    return rows
+
+
+async def search_chunks(
+    document_id: str, embedding: list[float], top_k: int = 5
+) -> list[dict]:
+    """Búsqueda vectorial LOCAL en un solo documento (mismo motivo que
+    search_chunks_multi: el RPC vía REST devuelve vacíos erráticos)."""
+    rows = await _fetch_chunk_rows(f"eq.{document_id}")
     return _rank_by_cosine(rows, embedding, top_k)
 
 
@@ -83,19 +109,20 @@ async def search_chunks_multi(
     """
     if not document_ids:
         return []
-    id_list = ",".join(document_ids)
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(
-            f"{BASE}/chunks",
-            params={
-                "document_id": f"in.({id_list})",
-                "select": "document_id,content,page_num,chunk_index,embedding",
-            },
-            headers=HEADERS,
-        )
-        resp.raise_for_status()
-        rows = resp.json()
+    id_list = ",".join(sorted(document_ids))
+    rows = await _fetch_chunk_rows(f"in.({id_list})")
     return _rank_by_cosine(rows, embedding, top_k)
+
+
+def _to_vec(raw) -> list[float] | None:
+    if isinstance(raw, list):
+        return raw if all(isinstance(x, (int, float)) for x in raw) else None
+    if isinstance(raw, str) and raw.startswith("["):
+        try:
+            return [float(x) for x in raw[1:-1].split(",") if x.strip()]
+        except ValueError:
+            return None
+    return None
 
 
 def _rank_by_cosine(rows: list[dict], embedding: list[float], top_k: int) -> list[dict]:
@@ -104,16 +131,6 @@ def _rank_by_cosine(rows: list[dict], embedding: list[float], top_k: int) -> lis
     PostgREST devuelve `embedding` como string pgvector "[0.1,0.2,...]"
     (no como array JSON); aceptamos ambas formas.
     """
-    def to_vec(raw) -> list[float] | None:
-        if isinstance(raw, list):
-            return raw if all(isinstance(x, (int, float)) for x in raw) else None
-        if isinstance(raw, str) and raw.startswith("["):
-            try:
-                return [float(x) for x in raw[1:-1].split(",") if x.strip()]
-            except ValueError:
-                return None
-        return None
-
     def norm(v: list[float]) -> float:
         return sum(x * x for x in v) ** 0.5 or 1.0
 
@@ -121,7 +138,7 @@ def _rank_by_cosine(rows: list[dict], embedding: list[float], top_k: int) -> lis
     target_norm = norm(target)
     scored: list[tuple[float, dict]] = []
     for row in rows:
-        vec = to_vec(row.get("embedding"))
+        vec = _to_vec(row.get("embedding"))
         if not vec:
             continue
         dot = sum(a * b for a, b in zip(vec, target))
@@ -206,6 +223,7 @@ async def set_document_status(
 
 
 async def delete_document(document_id: str) -> bool:
+    invalidate_chunk_cache()
     async with httpx.AsyncClient() as client:
         resp = await client.delete(
             f"{BASE}/documents",
@@ -241,6 +259,9 @@ async def list_active_documents() -> list[dict]:
 
 
 async def update_document_fields(document_id: str, fields: dict) -> dict:
+    # Activate, archive, restore and rollback all pass here: drop cached
+    # chunk rows so the next question sees the new knowledge set at once.
+    invalidate_chunk_cache()
     from datetime import datetime, timezone
 
     payload = {**fields, "updated_at": datetime.now(timezone.utc).isoformat()}
@@ -296,6 +317,7 @@ async def get_document_version(document_id: str, version: int) -> dict | None:
 
 
 async def delete_chunks_by_document(document_id: str) -> None:
+    invalidate_chunk_cache()
     async with httpx.AsyncClient() as client:
         resp = await client.delete(
             f"{BASE}/chunks",

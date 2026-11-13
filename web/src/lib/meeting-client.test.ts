@@ -1,8 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
   detectProvider,
   isTerminal,
+  LOGIN_REQUIRED_MESSAGE,
+  MeetingApiError,
+  meetingApi,
+  meetingWsUrl,
   parseMeetingEvent,
+  SERVER_UNAVAILABLE_MESSAGE,
   parseMeetingState,
 } from "./meeting-client";
 
@@ -104,5 +109,64 @@ describe("isTerminal", () => {
     expect(isTerminal("error")).toBe(true);
     expect(isTerminal("in_meeting")).toBe(false);
     expect(isTerminal("lobby")).toBe(false);
+  });
+});
+
+describe("meeting API transport", () => {
+  const realFetch = globalThis.fetch;
+  const calls: { url: string; init?: RequestInit }[] = [];
+  function stub(status: number, body: unknown, json = true) {
+    calls.length = 0;
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(json ? JSON.stringify(body) : String(body), { status });
+    }) as typeof fetch;
+  }
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  test("calls the same-origin /api path so the admin cookie is sent", async () => {
+    stub(200, { ok: true });
+    await meetingApi.leave("abc");
+    expect(calls[0].url).toBe("/api/meetings/abc/leave");
+    expect(calls[0].init?.credentials).toBe("same-origin");
+  });
+
+  test("401 reads as a login hint in Spanish", async () => {
+    stub(401, { detail: "No autenticado" });
+    const err = await meetingApi.leave("abc").catch((e) => e);
+    expect(err).toBeInstanceOf(MeetingApiError);
+    expect(err.status).toBe(401);
+    expect(err.message).toBe(LOGIN_REQUIRED_MESSAGE);
+  });
+
+  test("5xx without detail reads as server unavailable, not a raw code", async () => {
+    stub(502, "<html>bad gateway</html>", false);
+    const err = await meetingApi.leave("abc").catch((e) => e);
+    expect(err.status).toBe(502);
+    expect(err.message).toBe(SERVER_UNAVAILABLE_MESSAGE);
+  });
+
+  test("network failure keeps status 0 and a Spanish message", async () => {
+    globalThis.fetch = (async () => {
+      throw new TypeError("Failed to fetch");
+    }) as unknown as typeof fetch;
+    const err = await meetingApi.leave("abc").catch((e) => e);
+    expect(err.status).toBe(0);
+    expect(err.message).toBe("No se pudo contactar al servidor");
+  });
+});
+
+describe("meetingWsUrl", () => {
+  test("uses the page origin with wss on https", () => {
+    expect(meetingWsUrl("a b", { protocol: "https:", host: "manglara.app" })).toBe(
+      "wss://manglara.app/ws/meetings/a%20b"
+    );
+  });
+  test("uses ws on http", () => {
+    expect(meetingWsUrl("x", { protocol: "http:", host: "localhost:5173" })).toBe(
+      "ws://localhost:5173/ws/meetings/x"
+    );
   });
 });

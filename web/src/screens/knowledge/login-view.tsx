@@ -1,15 +1,27 @@
-import { useState } from "react";
-import { KeyRound, LogIn } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Clock, KeyRound, LogIn } from "lucide-react";
 import { Logo } from "../../components/brand/logo";
 
 export function LoginView({
   onLogin,
+  notice,
 }: {
   onLogin: (password: string) => Promise<void>;
+  /** Context message such as an expired session. */
+  notice?: string | null;
 }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const passwordRef = useRef<HTMLInputElement | null>(null);
+
+  // after a failed attempt, put the cursor back in the password field
+  useEffect(() => {
+    if (error && !busy) {
+      passwordRef.current?.focus();
+      passwordRef.current?.select();
+    }
+  }, [error, busy]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -19,7 +31,7 @@ export function LoginView({
     try {
       await onLogin(password);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Clave incorrecta");
+      setError(e instanceof Error && e.message ? e.message : "No se pudo iniciar sesión. Inténtalo de nuevo.");
     } finally {
       setBusy(false);
     }
@@ -38,14 +50,26 @@ export function LoginView({
           onSubmit={submit}
           className="bg-white rounded-2xl border border-neutral-200/80 shadow-sm p-6 flex flex-col gap-4"
         >
+          {notice && !error && (
+            <p
+              role="status"
+              className="flex items-center gap-2 text-sm text-amber-800 bg-amber-50 rounded-lg px-3 py-2"
+            >
+              <Clock className="h-4 w-4 shrink-0" />
+              {notice}
+            </p>
+          )}
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium text-neutral-700 flex items-center gap-2">
               <KeyRound className="h-4 w-4 text-neutral-400" />
               Clave del gestor
             </span>
             <input
+              ref={passwordRef}
               type="password"
               autoFocus
+              aria-invalid={error ? true : undefined}
+              aria-describedby={error ? "login-error" : undefined}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••••"
@@ -53,7 +77,11 @@ export function LoginView({
             />
           </label>
           {error && (
-            <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
+            <p
+              id="login-error"
+              role="alert"
+              className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2"
+            >
               {error}
             </p>
           )}

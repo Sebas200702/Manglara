@@ -41,10 +41,10 @@
 	@hashed path /assets/*
 	header @hashed Cache-Control "public, max-age=31536000, immutable"
 
-	@media path *.glb *.mp4 *.mp3 /headaudio/* /logos/*
+	@media path *.glb *.mp4 *.mp3 *.svg *.png /headaudio/* /logos/*
 	header @media Cache-Control "public, max-age=86400"
 
-	@revalidate not path /assets/* *.glb *.mp4 *.mp3 /headaudio/* /logos/* /api/* /ws/*
+	@revalidate not path /assets/* *.glb *.mp4 *.mp3 *.svg *.png /headaudio/* /logos/* /api/* /ws/*
 	header @revalidate Cache-Control "no-cache"
 
 	# API REST del backend (panel de conocimiento, ingesta de fuentes).
@@ -60,18 +60,6 @@
 
 	handle {
 		root * {{.DIST_DIR}}
-
-		# Cache: los assets con hash de Vite son inmutables; el resto de
-		# archivos de public/ (avatar, video, audio, logos) se revalidan cada
-		# dia via ETag; el HTML (index.html y fallback de la SPA) nunca se
-		# cachea sin revalidar, para que un deploy nuevo se vea al instante.
-		@hashed path /assets/*
-		header @hashed Cache-Control "public, max-age=31536000, immutable"
-
-		@public_media path *.glb *.mp4 *.mp3 *.svg *.png /headaudio/* /logos/*
-		header @public_media Cache-Control "public, max-age=86400"
-
-		header ?Cache-Control "no-cache"
 
 		# El GLB del avatar no trae un MIME conocido (sale como
 		# octet-stream y no se comprime); con este tipo entra en el match de

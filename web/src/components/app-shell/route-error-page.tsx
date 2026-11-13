@@ -1,3 +1,4 @@
+import { captureException } from "@sentry/react";
 import { AlertTriangle, Home, RotateCw } from "lucide-react";
 import { useEffect } from "react";
 import { isRouteErrorResponse, useRouteError } from "react-router-dom";
@@ -14,7 +15,10 @@ export function RouteErrorPage() {
   const notFound = isRouteErrorResponse(error) && error.status === 404;
 
   useEffect(() => {
-    if (!notFound) console.error("[route-error]", error);
+    if (notFound) return;
+    console.error("[route-error]", error);
+    // No-op when error tracking is off (no VITE_SENTRY_DSN).
+    captureException(error);
   }, [error, notFound]);
 
   if (notFound) return <NotFoundPage />;

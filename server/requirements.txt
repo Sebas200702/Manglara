@@ -11,6 +11,8 @@ PyMuPDF==2.1
 httpx==0.28.1
 python-multipart==0.0.33
 python-docx==1.2.0
+# Errores a Rustrak (ingesta compatible con Sentry). Apagado sin SENTRY_DSN.
+sentry-sdk==2.75.0
 
 # Live Meeting con Manglara: bot que se une a reuniones externas
 # (Teams/Zoom/Meet) con Chromium headless.

@@ -24,6 +24,7 @@ from db import list_active_documents
 from gemini_client import GeminiLiveClient
 from knowledge.router import auth_router, router as knowledge_router
 from meeting.router import router as meeting_router, ws_router as meeting_ws_router
+from observability import init_error_tracking
 from pdf.digest import build_knowledge_context
 from pdf.retrieval import retrieve_context
 from pdf.router import router as pdf_router
@@ -37,6 +38,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("server")
+init_error_tracking()
 
 # Eager RAG: fire retrieval while the user is still speaking so the context
 # reaches Gemini before it starts answering.

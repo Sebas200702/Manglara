@@ -5,7 +5,6 @@
  * join/leave, toggle the bot's mic/cam and switch Gemini on/off, and listens to
  * `/ws/meetings/{id}` for state and transcripts.
  */
-import { backendHttpOrigin, backendWsOrigin } from "./backend-url";
 
 export type MeetingProvider = "teams" | "zoom" | "meet";
 
@@ -152,11 +151,24 @@ export class MeetingApiError extends Error {
   }
 }
 
+export const LOGIN_REQUIRED_MESSAGE =
+  "Inicia sesión en el panel de conocimiento para usar el bot de reuniones.";
+export const SERVER_UNAVAILABLE_MESSAGE =
+  "El servidor no está disponible. Intenta de nuevo en un momento.";
+const CONNECTION_LOST_MESSAGE =
+  "Se perdió la conexión con el servidor. Recarga la página para seguir la reunión.";
+
+/**
+ * The meeting API is reached through the page's own origin (`/api/*` and
+ * `/ws/*` are proxied by Caddy in prod and by Vite in dev), so the admin
+ * session cookie is first-party and sent with every call.
+ */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(`${backendHttpOrigin()}${path}`, {
+    res = await fetch(`/api${path}`, {
       ...init,
+      credentials: "same-origin",
       headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
     });
   } catch {
@@ -169,13 +181,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     body = null;
   }
   if (!res.ok) {
+    if (res.status === 401) throw new MeetingApiError(LOGIN_REQUIRED_MESSAGE, 401);
     const detail = isObject(body) ? body.detail : null;
     const message =
       typeof detail === "string"
         ? detail
         : Array.isArray(detail)
           ? "Datos inválidos"
-          : `Error del servidor (${res.status})`;
+          : res.status >= 500
+            ? SERVER_UNAVAILABLE_MESSAGE
+            : `Error del servidor (${res.status})`;
     throw new MeetingApiError(message, res.status);
   }
   return body as T;
@@ -214,6 +229,15 @@ export const meetingApi = {
     post<{ ok: boolean }>(`/meetings/${encodeURIComponent(id)}/cam`, { enabled }),
 };
 
+/** WebSocket URL for a meeting's UI events, on the page's own origin. */
+export function meetingWsUrl(
+  id: string,
+  loc: Pick<Location, "protocol" | "host"> = window.location
+): string {
+  const scheme = loc.protocol === "https:" ? "wss:" : "ws:";
+  return `${scheme}//${loc.host}/ws/meetings/${encodeURIComponent(id)}`;
+}
+
 export interface MeetingEventsHandlers {
   onEvent: (event: MeetingEvent) => void;
   /** Socket state, for a "reconnecting" hint in the UI. */
@@ -231,6 +255,8 @@ export class MeetingEvents {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private readonly baseDelayMs = 1000;
   private readonly maxDelayMs = 10000;
+  /** ~1 minute of retries with the backoff above, then give up visibly. */
+  private readonly maxAttempts = 10;
 
   constructor(
     private readonly id: string,
@@ -241,9 +267,7 @@ export class MeetingEvents {
 
   private open(): void {
     if (this.closed) return;
-    const ws = new WebSocket(
-      `${backendWsOrigin()}/ws/meetings/${encodeURIComponent(this.id)}`
-    );
+    const ws = new WebSocket(meetingWsUrl(this.id));
     this.ws = ws;
     ws.onopen = () => {
       this.attempts = 0;
@@ -271,12 +295,23 @@ export class MeetingEvents {
         this.closed = true;
         return;
       }
+      // 4401: no admin session (expired or never logged in).
+      if (ev.code === 4401) {
+        this.handlers.onEvent({ type: "error", message: LOGIN_REQUIRED_MESSAGE });
+        this.closed = true;
+        return;
+      }
       this.scheduleReconnect();
     };
   }
 
   private scheduleReconnect(): void {
     if (this.closed || this.timer) return;
+    if (this.attempts >= this.maxAttempts) {
+      this.handlers.onEvent({ type: "error", message: CONNECTION_LOST_MESSAGE });
+      this.closed = true;
+      return;
+    }
     this.attempts += 1;
     const delay = Math.min(this.baseDelayMs * 2 ** (this.attempts - 1), this.maxDelayMs);
     this.timer = setTimeout(() => {

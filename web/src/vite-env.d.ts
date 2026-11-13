@@ -14,6 +14,12 @@ interface ImportMetaEnv {
    * the GLB is not committed to the repo). Inlined at build time.
    */
   readonly VITE_AVATAR_URL?: string;
+  /** DSN of the `manglara-web` Rustrak project. Empty = error tracking off. */
+  readonly VITE_SENTRY_DSN?: string;
+  /** Error tracking environment (default `production`). */
+  readonly VITE_SENTRY_ENVIRONMENT?: string;
+  /** Error tracking release name. */
+  readonly VITE_SENTRY_RELEASE?: string;
 }
 
 interface ImportMeta {

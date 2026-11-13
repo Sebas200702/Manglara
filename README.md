@@ -252,11 +252,16 @@ sudo firewall-cmd --reload
 | `MEETING_ALONE_TIMEOUT_MIN` | Sale si se queda sola este tiempo; 0 = nunca (default: 10) |
 | `MEETING_WEB_URL` | URL pública de la web app, donde el bot abre el avatar (default: http://localhost:5173) |
 | `MEETING_AVATAR_URL` | Ruta (o URL absoluta) de la página del avatar (default: /meeting/avatar) |
-| `MEETINGS_ENABLED` | `false` apaga la API del bot de reuniones (`/meetings`, `/ws/meetings`), que no tiene autenticación (default: true) |
+| `WEB_CONCURRENCY` | Workers de uvicorn (default: 1). Más de 1 exige `MEETINGS_ENABLED=false`: el bot de reuniones vive en un solo proceso y el server no arranca si se combinan. Los topes `VOICE_MAX_*` son por worker |
+| `MEETINGS_ENABLED` | `false` apaga la API del bot de reuniones (`/meetings`, `/api/meetings`, `/ws/meetings`). Exige la sesión del panel de conocimiento: la web la llama por su propio origen (`/api`, `/ws`) para que la cookie viaje (default: true) |
 | `VOICE_MAX_SESSIONS` | Tope de sesiones de voz simultáneas; al llenarse, la persona ve "Manglara está atendiendo a muchas personas…". 0 = sin límite (default: 0) |
 | `VOICE_MAX_SESSIONS_PER_IP` | Tope por IP. Cuidado en eventos: todo el wifi del lugar sale por una IP. 0 = sin límite (default: 0) |
 | `VOICE_ALLOWED_ORIGINS` | Orígenes del navegador que pueden abrir `/ws/voice`, coma-separados; vacío = todos (default: vacío) |
 | `LOG_TRANSCRIPTS` | `false` deja las transcripciones de la voz pública fuera de los logs (default: true) |
+| `SENTRY_DSN` | DSN del proyecto `manglara-server` en Rustrak; vacío apaga el envío de errores. Nunca envía PII ni variables locales (default: vacío) |
+| `SENTRY_ENVIRONMENT` / `SENTRY_RELEASE` | Entorno y versión de los errores (default: `production` / sin versión) |
+| `SENTRY_TRACES_SAMPLE_RATE` | Fracción de requests con trazas, 0 a 1 (default: 0) |
+| `VITE_SENTRY_DSN` | Web, en build: DSN del proyecto `manglara-web` en Rustrak; vacío apaga el envío de errores (default: vacío) |
 | `VOICE_MAX_NEW_SESSIONS_PER_MIN` | Sesiones de voz nuevas por minuto; cada una manda el system prompt completo y una ráfaga agota los tokens por minuto de Gemini. 0 = sin límite (default: 0) |
 | `VOICE_IDLE_TIMEOUT_S` | Cierra la sesión si la persona no habla en este tiempo; la web muestra el motivo y no reconecta. 0 = nunca (default: 90) |
 | `VOICE_MAX_SESSION_MIN` | Duración máxima de una sesión de voz. 0 = sin límite (default: 0) |

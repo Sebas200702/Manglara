@@ -1,11 +1,14 @@
 import {
   Ban,
+  CircleCheck,
+  CloudOff,
   Download,
   Eye,
   FileUp,
   LogOut,
   Phone,
   RefreshCw,
+  X,
 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -14,7 +17,7 @@ import { Logo } from "../../components/brand/logo";
 import { LoginView } from "./login-view";
 import { HistoryDrawer } from "./history-drawer";
 import { PromptPreviewModal } from "./prompt-preview-modal";
-import { SourcesList, SourcesEmpty } from "./sources-list";
+import { SourcesList, SourcesEmpty, SourcesSkeleton } from "./sources-list";
 import { UploadDialog } from "./upload-dialog";
 import { useKnowledgeScreen } from "./use-knowledge-screen";
 
@@ -25,14 +28,13 @@ export function KnowledgeScreen() {
   const [replaceTarget, setReplaceTarget] = useState<{ id: string; name: string } | null>(null);
 
   if (screen.checking) {
-    return (
-      <div className="min-h-dvh flex items-center justify-center bg-[#f8faf6] font-montserrat text-sm text-neutral-400">
-        Cargando panel…
-      </div>
-    );
+    return <CheckingView />;
+  }
+  if (screen.unreachable) {
+    return <UnreachableView message={screen.unreachable} onRetry={screen.retry} />;
   }
   if (!screen.authed) {
-    return <LoginView onLogin={screen.login} />;
+    return <LoginView onLogin={screen.login} notice={screen.loginNotice} />;
   }
 
   const activeCount = screen.sources.filter((s) => s.active).length;
@@ -130,7 +132,7 @@ export function KnowledgeScreen() {
             />
             <span
               aria-hidden
-              className="relative h-5 w-9 rounded-full bg-neutral-300 peer-checked:bg-navy-500 transition after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"
+              className="relative h-5 w-9 rounded-full bg-neutral-300 peer-checked:bg-navy-500 transition after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4 peer-focus-visible:ring-2 peer-focus-visible:ring-brand-400 peer-focus-visible:ring-offset-2"
             />
             Mostrar archivadas
           </label>
@@ -155,19 +157,23 @@ export function KnowledgeScreen() {
             </button>
             <button
               type="button"
-              onClick={screen.retry}
-              className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
-              title="Refrescar"
+              onClick={() => void screen.refresh()}
+              disabled={screen.loading}
+              className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 disabled:cursor-wait disabled:opacity-60"
+              title={screen.loading ? "Actualizando…" : "Refrescar"}
+              aria-label={screen.loading ? "Actualizando la lista" : "Refrescar la lista"}
             >
-              <RefreshCw className="h-3.5 w-3.5" />
+              <RefreshCw className={`h-3.5 w-3.5 ${screen.loading ? "animate-spin" : ""}`} />
             </button>
           </div>
         </div>
 
         {/* Lista */}
-        {screen.sources.length === 0 ? (
+        {screen.sources.length === 0 && screen.loading ? (
+          <SourcesSkeleton />
+        ) : screen.sources.length === 0 ? (
           <ul>
-            <SourcesEmpty hashing={screen.loading} />
+            <SourcesEmpty />
           </ul>
         ) : (
           <SourcesList
@@ -214,17 +220,107 @@ export function KnowledgeScreen() {
       />
       <PromptPreviewModal preview={screen.promptPreview} onClose={screen.closePreview} />
 
-      {screen.notice && (
-        <div className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-full bg-navy-700 px-4 py-2 text-sm font-semibold text-white shadow-lg">
-          {screen.notice}
-        </div>
-      )}
-      {screen.error && (
-        <div className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-full bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-lg flex items-center gap-2">
-          <Ban className="h-4 w-4" />
-          {screen.error}
-        </div>
-      )}
+      <div className="fixed bottom-5 left-1/2 z-[60] flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 flex-col items-center gap-2">
+        {screen.notice && (
+          <Toast tone="notice" onDismiss={screen.dismissNotice}>
+            <CircleCheck className="h-4 w-4 shrink-0" />
+            <span className="flex-1">{screen.notice}</span>
+          </Toast>
+        )}
+        {screen.error && (
+          <Toast tone="error" onDismiss={screen.dismissError}>
+            <Ban className="h-4 w-4 shrink-0" />
+            <span className="flex-1">{screen.error.message}</span>
+            {screen.error.retry && (
+              <button
+                type="button"
+                onClick={() => {
+                  const retry = screen.error?.retry;
+                  screen.dismissError();
+                  retry?.();
+                }}
+                className="shrink-0 rounded-full bg-white/20 px-2.5 py-0.5 text-xs font-bold hover:bg-white/30"
+              >
+                Reintentar
+              </button>
+            )}
+          </Toast>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Toast({
+  tone,
+  onDismiss,
+  children,
+}: {
+  tone: "notice" | "error";
+  onDismiss: () => void;
+  children: React.ReactNode;
+}) {
+  const isError = tone === "error";
+  return (
+    <div
+      role={isError ? "alert" : "status"}
+      className={`flex w-full items-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold text-white shadow-lg ${isError ? "bg-red-600" : "bg-navy-700"}`}
+    >
+      {children}
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Cerrar aviso"
+        className="shrink-0 rounded-full p-1 text-white/80 hover:bg-white/20 hover:text-white"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+function CheckingView() {
+  return (
+    <div
+      className="min-h-dvh flex flex-col bg-[#f8faf6] font-montserrat"
+      aria-busy="true"
+      aria-label="Cargando panel"
+    >
+      <div className="h-16 shrink-0 border-b border-neutral-200/80 bg-white" />
+      <div className="mx-auto w-full max-w-3xl px-4 sm:px-6 py-6 animate-pulse">
+        <div className="h-6 w-56 rounded bg-neutral-200" />
+        <div className="mt-2 h-4 w-80 max-w-full rounded bg-neutral-100" />
+        <div className="mt-6 mb-6 h-20 rounded-xl bg-white border border-neutral-200/80" />
+      </div>
+      <div className="mx-auto w-full max-w-3xl px-4 sm:px-6">
+        <SourcesSkeleton />
+      </div>
+    </div>
+  );
+}
+
+function UnreachableView({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="min-h-dvh bg-[#f8faf6] font-montserrat flex items-center justify-center px-4">
+      <div
+        role="alert"
+        className="w-full max-w-sm rounded-2xl border border-neutral-200/80 bg-white p-6 text-center shadow-sm"
+      >
+        <CloudOff className="mx-auto h-7 w-7 text-neutral-400" />
+        <p className="mt-3 font-semibold text-neutral-800">{message}</p>
+        <p className="mt-1 text-sm text-neutral-500">
+          Revisa tu conexión o espera un momento; el panel volverá en cuanto el
+          servidor responda.
+        </p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-5 inline-flex items-center gap-2 rounded-lg bg-brand-500 hover:bg-brand-600 text-white font-semibold text-sm px-4 py-2.5 transition"
+        >
+          <RefreshCw className="h-4 w-4" />
+          Reintentar
+        </button>
+      </div>
     </div>
   );
 }

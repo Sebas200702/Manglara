@@ -93,6 +93,32 @@ def _block_app_protocols(profile_dir: str):
         logger.warning("[meeting] no se pudo bloquear protocolos de apps: %s", e)
 
 
+
+def chromium_args(headless: bool) -> list[str]:
+    """Launch flags for the meeting bot's Chromium."""
+    args = [
+        "--autoplay-policy=no-user-gesture-required",
+        "--use-fake-ui-for-media-stream",
+        "--no-first-run",
+        "--mute-audio",
+        # El avatar (iframe) y el WS interno corren en un origen local
+        # embebido en una página pública https: sin estos flags Chrome
+        # puede bloquearlos (Private/Local Network Access) o frenar el
+        # render de la pestaña y del iframe en segundo plano.
+        "--disable-features=PrivateNetworkAccessSendPreflights,"
+        "PrivateNetworkAccessRespectPreflightResults,"
+        "BlockInsecurePrivateNetworkRequests,LocalNetworkAccessChecks",
+        "--disable-background-timer-throttling",
+        "--disable-renderer-backgrounding",
+        "--disable-backgrounding-occluded-windows",
+        # WebGL del avatar por software si no hay GPU (servidores).
+        "--enable-unsafe-swiftshader",
+        # Docker da 64 MB de /dev/shm: con avatar WebGL + WebRTC Chromium
+        # se cae ("Aw, Snap" / target closed). Usar /tmp en su lugar.
+        "--disable-dev-shm-usage",
+    ]
+    return ["--headless=new"] + args if headless else args
+
 class MeetingBrowser:
     """Dueño del ciclo de vida de Playwright para una sesión."""
 
@@ -130,27 +156,8 @@ class MeetingBrowser:
         # headless=new de Chromium completo (no headless-shell): WebRTC y
         # WebAudio funcionan igual que en headed. Para debug de selectores,
         # MEETING_HEADLESS=false abre ventana visible.
-        args = [
-            "--autoplay-policy=no-user-gesture-required",
-            "--use-fake-ui-for-media-stream",
-            "--no-first-run",
-            "--mute-audio",
-            # El avatar (iframe) y el WS interno corren en un origen local
-            # embebido en una página pública https: sin estos flags Chrome
-            # puede bloquearlos (Private/Local Network Access) o frenar el
-            # render de la pestaña y del iframe en segundo plano.
-            "--disable-features=PrivateNetworkAccessSendPreflights,"
-            "PrivateNetworkAccessRespectPreflightResults,"
-            "BlockInsecurePrivateNetworkRequests,LocalNetworkAccessChecks",
-            "--disable-background-timer-throttling",
-            "--disable-renderer-backgrounding",
-            "--disable-backgrounding-occluded-windows",
-            # WebGL del avatar por software si no hay GPU (servidores).
-            "--enable-unsafe-swiftshader",
-        ]
+        args = chromium_args(MEETING_HEADLESS)
         headless = False
-        if MEETING_HEADLESS:
-            args = ["--headless=new"] + args
 
         init_script = build_init_script(ws_url, session_id, selectors, ws_token)
 

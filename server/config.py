@@ -25,6 +25,14 @@ GEMINI_LIVE_MODEL = os.getenv(
 )
 GEMINI_DIGEST_MODEL = os.getenv("GEMINI_DIGEST_MODEL", "models/gemini-3.5-flash")
 GEMINI_VOICE_NAME = os.getenv("GEMINI_VOICE_NAME", "Zephyr")
+# Sampling temperature of the Live model. Unset = the API default (no value
+# sent). PR #14 suggested 0.4 so answers stick to the prompt and the cartillas
+# instead of improvising facts.
+GEMINI_TEMPERATURE = (
+    float(os.environ["GEMINI_TEMPERATURE"])
+    if os.getenv("GEMINI_TEMPERATURE", "").strip()
+    else None
+)
 PORT = int(os.getenv("PORT", "8000"))
 
 # Orígenes extra del frontend con permiso CORS (coma-separados), p. ej. la web
@@ -58,6 +66,10 @@ VOICE_MAX_NEW_SESSIONS_PER_MIN = int(os.getenv("VOICE_MAX_NEW_SESSIONS_PER_MIN",
 VOICE_IDLE_TIMEOUT_S = float(os.getenv("VOICE_IDLE_TIMEOUT_S", "90"))
 # Duración máxima de una sesión de voz (0 = sin límite).
 VOICE_MAX_SESSION_MIN = float(os.getenv("VOICE_MAX_SESSION_MIN", "0"))
+# Silencio (ms) tras el que Gemini da por terminado el turno en la voz pública.
+# Más margen deja llegar el contexto de las cartillas (RAG) antes de que
+# Manglara responda, a cambio de algo de latencia. 0 / vacío = VAD por defecto.
+VOICE_VAD_SILENCE_MS = int(os.getenv("VOICE_VAD_SILENCE_MS", "") or "0")
 # Conocimiento precargado en el system prompt de cada sesión (caracteres).
 # Menos = conexión más barata; la recuperación (RAG) sigue cubriendo el resto.
 VOICE_PRELOAD_CHARS = int(os.getenv("VOICE_PRELOAD_CHARS", "60000"))

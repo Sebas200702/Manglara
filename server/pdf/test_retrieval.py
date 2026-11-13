@@ -90,10 +90,42 @@ def test_retrieve_context_end_to_end():
     check(ctx.startswith("[Página 9]"), "most relevant passage comes first")
 
 
+def test_assemble_labels_sources():
+    passages_ = [chunk("Texto del módulo uno.", 0.1, page=3)]
+    ctx = retrieval.assemble_context(passages_, names={"d": "Módulo 1"})
+    check(ctx.startswith("[Módulo 1 — Página 3]\n"), "known document name labels the passage")
+    ctx = retrieval.assemble_context(passages_, names={"other": "X"})
+    check(ctx.startswith("[Página 3]\n"), "unknown document falls back to the page label")
+    label = "[" + "N" * 50 + " — Página 3]\nTexto del módulo uno."
+    ctx = retrieval.assemble_context(passages_, max_chars=len(label) - 1, names={"d": "N" * 50})
+    check(ctx == "", "the label counts toward the char budget")
+
+
+def test_retrieve_context_passes_names():
+    async def fake_embed(texts, task_type="RETRIEVAL_DOCUMENT"):
+        return [[0.0] * 3 for _ in texts]
+
+    async def fake_search(ids, embedding, top_k=10):
+        return [chunk(MODULE5, 0.45, page=9)]
+
+    saved = (retrieval.embed_texts, retrieval.db.search_chunks_multi)
+    retrieval.embed_texts = fake_embed
+    retrieval.db.search_chunks_multi = fake_search
+    try:
+        ctx = asyncio.run(
+            retrieval.retrieve_context(["d"], "¿Qué es IKIGAI?", names={"d": "Módulo 5"})
+        )
+    finally:
+        retrieval.embed_texts, retrieval.db.search_chunks_multi = saved
+    check(ctx.startswith("[Módulo 5 — Página 9]"), "retrieve_context labels passages with their source")
+
+
 if __name__ == "__main__":
     test_passages()
     test_rank_prefers_keyword_passage_over_generic_chunk()
     test_rank_falls_back_to_vector_without_keywords()
     test_assemble_never_drops_everything()
     test_retrieve_context_end_to_end()
+    test_assemble_labels_sources()
+    test_retrieve_context_passes_names()
     print(f"{_passed} checks OK")

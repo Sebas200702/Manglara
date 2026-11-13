@@ -9,11 +9,39 @@ from config import (
     GEMINI_API_KEY,
     GEMINI_LIVE_MODEL,
     GEMINI_MEDIA_RESOLUTION,
+    GEMINI_TEMPERATURE,
     GEMINI_VOICE_NAME,
 )
 from prompt import SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
+
+
+def live_config(system_prompt: str | None = None, extra_config: dict | None = None) -> dict:
+    """Gemini Live session config. Optional settings are only sent when set,
+    so an unset env var keeps the model default."""
+    return {
+        "response_modalities": ["AUDIO"],
+        "input_audio_transcription": {},
+        "output_audio_transcription": {},
+        "speech_config": {
+            "voice_config": {
+                "prebuilt_voice_config": {
+                    "voice_name": GEMINI_VOICE_NAME,
+                }
+            }
+        },
+        "system_instruction": {
+            "parts": [{"text": system_prompt or SYSTEM_PROMPT}]
+        },
+        **(
+            {"media_resolution": GEMINI_MEDIA_RESOLUTION}
+            if GEMINI_MEDIA_RESOLUTION
+            else {}
+        ),
+        **({"temperature": GEMINI_TEMPERATURE} if GEMINI_TEMPERATURE is not None else {}),
+        **(extra_config or {}),
+    }
 
 
 class GeminiLiveClient:
@@ -41,27 +69,7 @@ class GeminiLiveClient:
     async def connect(
         self, system_prompt: str | None = None, extra_config: dict | None = None
     ):
-        config = {
-            "response_modalities": ["AUDIO"],
-            "input_audio_transcription": {},
-            "output_audio_transcription": {},
-            "speech_config": {
-                "voice_config": {
-                    "prebuilt_voice_config": {
-                        "voice_name": GEMINI_VOICE_NAME,
-                    }
-                }
-            },
-            "system_instruction": {
-                "parts": [{"text": system_prompt or SYSTEM_PROMPT}]
-            },
-            **(
-                {"media_resolution": GEMINI_MEDIA_RESOLUTION}
-                if GEMINI_MEDIA_RESOLUTION
-                else {}
-            ),
-            **(extra_config or {}),
-        }
+        config = live_config(system_prompt, extra_config)
 
         self._ctx = self.client.aio.live.connect(
             model=GEMINI_LIVE_MODEL, config=config

@@ -264,6 +264,83 @@ def test_voice_session_uses_context_compression():
           "voice session asks Gemini for a sliding context window")
 
 
+def test_live_config_defaults_send_no_temperature_or_vad():
+    import gemini_client
+
+    cfg = gemini_client.live_config("prompt")
+    check("temperature" not in cfg, "GEMINI_TEMPERATURE unset: no temperature sent")
+    saved = gemini_client.GEMINI_TEMPERATURE
+    gemini_client.GEMINI_TEMPERATURE = 0.4
+    try:
+        cfg = gemini_client.live_config("prompt")
+    finally:
+        gemini_client.GEMINI_TEMPERATURE = saved
+    check(cfg.get("temperature") == 0.4, "GEMINI_TEMPERATURE set: sent to Gemini Live")
+
+    FakeGemini.instances.clear()
+    _use(VoiceAdmission())
+    asyncio.run(asyncio.wait_for(main.ws_voice(FakeSocket()), timeout=2))
+    cfg = FakeGemini.instances[0].extra_config or {}
+    check("realtime_input_config" not in cfg, "VOICE_VAD_SILENCE_MS unset: Gemini default VAD")
+
+
+def test_voice_vad_silence_is_configurable():
+    saved = main.VOICE_VAD_SILENCE_MS
+    main.VOICE_VAD_SILENCE_MS = 700
+    try:
+        FakeGemini.instances.clear()
+        _use(VoiceAdmission())
+        asyncio.run(asyncio.wait_for(main.ws_voice(FakeSocket()), timeout=2))
+    finally:
+        main.VOICE_VAD_SILENCE_MS = saved
+    cfg = FakeGemini.instances[0].extra_config or {}
+    check(cfg.get("realtime_input_config") == {
+        "automatic_activity_detection": {"silence_duration_ms": 700}
+    }, "VOICE_VAD_SILENCE_MS set: end-of-speech silence sent")
+    check(cfg.get("context_window_compression") == {"sliding_window": {}},
+          "VAD setting keeps the sliding context window")
+
+
+class VisitorTurnGemini(FakeGemini):
+    """The visitor says one sentence and Manglara answers (no audio)."""
+
+    async def receive_loop(self):
+        await self.on_user_partial_transcript("hola secreto")
+        await self.turn_complete_callback()
+        await asyncio.Event().wait()
+        yield b""  # pragma: no cover
+
+
+class LingeringSocket(FakeSocket):
+    """Browser that stays a moment, so Gemini's side gets to run."""
+
+    async def iter_text(self):
+        await asyncio.sleep(0.1)
+        return
+        yield  # pragma: no cover
+
+
+def test_turn_metric_logged_without_transcript():
+    import logging
+
+    records = []
+    handler = logging.Handler()
+    handler.emit = lambda r: records.append(r.getMessage())
+    main.logger.addHandler(handler)
+    main.GeminiLiveClient = VisitorTurnGemini
+    try:
+        _use(VoiceAdmission())
+        asyncio.run(asyncio.wait_for(main.ws_voice(LingeringSocket()), timeout=2))
+    finally:
+        main.GeminiLiveClient = FakeGemini
+        main.logger.removeHandler(handler)
+    turns = [m for m in records if m.startswith("[metric] turn ")]
+    check(len(turns) == 1 and '"context": "none"' in turns[0], "each visitor turn logs one metric line")
+    check(any(m.startswith("[metric] session ") for m in records), "session end logs the metric summary")
+    check(not any("secreto" in m for m in records if m.startswith("[metric]")),
+          "metric lines never carry transcript text")
+
+
 class LeavingSocket(FakeSocket):
     """Browser that closed the tab while Gemini was connecting."""
 
@@ -349,6 +426,9 @@ if __name__ == "__main__":
     test_ws_quota_error_reads_as_busy()
     test_idle_session_is_ended()
     test_voice_session_uses_context_compression()
+    test_live_config_defaults_send_no_temperature_or_vad()
+    test_voice_vad_silence_is_configurable()
+    test_turn_metric_logged_without_transcript()
     test_browser_leaving_before_ready_closes_gemini()
     test_model_speech_counts_as_activity()
     test_meeting_debug_ui_rejects_forwarded_loopback()

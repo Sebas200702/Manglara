@@ -38,4 +38,6 @@ EXPOSE 8000
 # --proxy-headers para que uvicorn use X-Forwarded-For (Traefik va delante).
 # --ws-max-size: el mensaje más grande es un frame JPEG de 640 px en base64
 # (~100 KB); 4 MiB deja margen y evita el default de 16 MiB por mensaje.
+# Workers: uvicorn lee $WEB_CONCURRENCY (default 1). >1 solo con
+# MEETINGS_ENABLED=false (ver server/process_layout.py).
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips=* --ws-max-size 4194304"]

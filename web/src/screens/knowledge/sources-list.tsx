@@ -145,12 +145,13 @@ function SourceRow(props: SourceRowProps) {
         <button
           type="button"
           disabled={props.index === 0}
+          aria-label={`Subir ${source.name}`}
           onClick={() => props.onMoveStep(source.id, -1)}
           className="text-neutral-300 hover:text-brand-600 disabled:opacity-30"
         >
           <ArrowUp className="h-3 w-3" />
         </button>
-        <button type="button" onClick={() => props.onMoveStep(source.id, 1)} className="text-neutral-300 hover:text-brand-600">
+        <button type="button" aria-label={`Bajar ${source.name}`} onClick={() => props.onMoveStep(source.id, 1)} className="text-neutral-300 hover:text-brand-600">
           <ArrowDown className="h-3 w-3" />
         </button>
       </div>
@@ -192,6 +193,7 @@ function SourceRow(props: SourceRowProps) {
         <input
           type="checkbox"
           className="sr-only peer"
+          aria-label={`Usar ${source.name} en la llamada`}
           disabled={!canToggle || props.busy}
           checked={source.active}
           onChange={(e) => props.onActivate(source.id, e.target.checked)}
@@ -200,7 +202,8 @@ function SourceRow(props: SourceRowProps) {
           aria-hidden
           className="relative h-6 w-10 rounded-full bg-neutral-300 peer-checked:bg-brand-500 transition
             after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:transition
-            peer-checked:after:translate-x-4 peer-disabled:opacity-50"
+            peer-checked:after:translate-x-4 peer-disabled:opacity-50
+            peer-focus-visible:ring-2 peer-focus-visible:ring-brand-400 peer-focus-visible:ring-offset-2"
         />
         <span className="hidden sm:inline text-xs font-semibold text-neutral-600">
           {source.active ? "Activa" : "Inactiva"}
@@ -257,6 +260,7 @@ function RowAction({
     <button
       type="button"
       title={title}
+      aria-label={title}
       disabled={disabled}
       onClick={onClick}
       className="p-2 rounded-lg text-neutral-400 hover:text-navy-700 hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
@@ -266,16 +270,35 @@ function RowAction({
   );
 }
 
-export function SourcesEmpty({ hashing }: { hashing: boolean }) {
+export function SourcesEmpty() {
   return (
     <li className="rounded-xl border border-dashed border-neutral-300 bg-white/60 px-4 py-10 text-center">
       <CircleCheck className="mx-auto h-6 w-6 text-brand-400" />
-      <p className="mt-2 font-semibold text-neutral-700">
-        {hashing ? "Cargando…" : "Sin cartillas todavía"}
-      </p>
+      <p className="mt-2 font-semibold text-neutral-700">Sin cartillas todavía</p>
       <p className="mt-1 text-sm text-neutral-500">
-        {hashing ? "" : "Sube la primera y actívala."}
+        Sube la primera con «Nueva cartilla» y actívala.
       </p>
     </li>
+  );
+}
+
+/** Placeholder rows shown while the list loads for the first time. */
+export function SourcesSkeleton({ rows = 3 }: { rows?: number }) {
+  return (
+    <ul className="flex flex-col gap-2" aria-busy="true" aria-label="Cargando cartillas">
+      {Array.from({ length: rows }, (_, i) => (
+        <li
+          key={i}
+          className="bg-white border border-neutral-200/80 rounded-xl px-3 py-3 flex items-center gap-3 animate-pulse"
+        >
+          <span className="h-4 w-4 rounded bg-neutral-200" />
+          <div className="flex-1 flex flex-col gap-2">
+            <span className="h-3.5 w-2/5 rounded bg-neutral-200" />
+            <span className="h-3 w-3/5 rounded bg-neutral-100" />
+          </div>
+          <span className="h-6 w-10 rounded-full bg-neutral-200" />
+        </li>
+      ))}
+    </ul>
   );
 }

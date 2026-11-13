@@ -1,5 +1,7 @@
 import { FileText, Loader2, X } from "lucide-react";
+import { useId } from "react";
 import type { PromptPreview } from "../../lib/knowledge-client";
+import { useDialogA11y } from "./use-dialog-a11y";
 
 export interface PromptPreviewModalProps {
   preview: PromptPreview | "loading" | null;
@@ -7,6 +9,8 @@ export interface PromptPreviewModalProps {
 }
 
 export function PromptPreviewModal({ preview, onClose }: PromptPreviewModalProps) {
+  const titleId = useId();
+  const dialogRef = useDialogA11y<HTMLDivElement>(preview !== null, onClose);
   if (!preview) return null;
 
   const isLoaded = preview !== "loading";
@@ -16,15 +20,18 @@ export function PromptPreviewModal({ preview, onClose }: PromptPreviewModalProps
       className="fixed inset-0 z-50 flex items-center justify-center bg-navy-950/45 px-4 backdrop-blur-xs"
       role="dialog"
       aria-modal="true"
+      aria-labelledby={titleId}
       onClick={onClose}
     >
       <div
-        className="w-full max-w-3xl h-[80dvh] flex flex-col bg-white rounded-2xl border border-neutral-200 shadow-xl font-montserrat overflow-hidden"
+        ref={dialogRef}
+        tabIndex={-1}
+        className="outline-none w-full max-w-3xl h-[80dvh] flex flex-col bg-white rounded-2xl border border-neutral-200 shadow-xl font-montserrat overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-center justify-between border-b border-neutral-200 px-5 py-4">
           <div>
-            <h2 className="flex items-center gap-2 font-bold text-neutral-800">
+            <h2 id={titleId} className="flex items-center gap-2 font-bold text-neutral-800">
               <FileText className="h-4 w-4 text-navy-600" />
               Prompt de la próxima llamada
             </h2>
@@ -37,6 +44,7 @@ export function PromptPreviewModal({ preview, onClose }: PromptPreviewModalProps
           <button
             type="button"
             onClick={onClose}
+            aria-label="Cerrar"
             className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
           >
             <X className="h-4 w-4" />

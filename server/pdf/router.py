@@ -35,7 +35,7 @@ async def list_docs():
 async def get_doc(doc_id: str):
     doc = await db.get_document(doc_id)
     if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail="No encontramos ese documento")
     return _out(doc)
 
 
@@ -43,7 +43,7 @@ async def get_doc(doc_id: str):
 async def delete_doc(doc_id: str):
     doc = await db.get_document(doc_id)
     if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail="No encontramos ese documento")
     await db.delete_document(doc_id)
     logger.info("[pdf] deleted %s (%s)", doc_id, doc["name"])
     return {"ok": True}
@@ -53,7 +53,7 @@ async def delete_doc(doc_id: str):
 async def archive_doc(doc_id: str):
     doc = await db.get_document(doc_id)
     if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail="No encontramos ese documento")
     await db.update_document_fields(
         doc_id, {"status": "archived", "active": False,
                  "message": "Archivado desde la API"}
@@ -66,7 +66,7 @@ async def archive_doc(doc_id: str):
 async def unarchive_doc(doc_id: str):
     doc = await db.get_document(doc_id)
     if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail="No encontramos ese documento")
     await db.update_document_fields(doc_id, {"status": "ready", "message": ""})
     logger.info("[pdf] unarchived %s (%s)", doc_id, doc["name"])
     return {"ok": True, "status": "ready"}
@@ -76,9 +76,9 @@ async def unarchive_doc(doc_id: str):
 async def activate_doc(doc_id: str):
     doc = await db.get_document(doc_id)
     if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail="No encontramos ese documento")
     if doc["status"] != "ready":
-        raise HTTPException(status_code=400, detail="Document is not ready")
+        raise HTTPException(status_code=400, detail="El documento todavía no está listo")
     await db.update_document_fields(doc_id, {"active": True})
     return ActivateResponse(
         document_id=doc_id,

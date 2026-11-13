@@ -98,23 +98,65 @@ export class KnowledgeApiError extends Error {
   }
 }
 
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api${path}`, {
-    ...init,
-    headers: { ...(init?.headers ?? {}) },
-  });
+export const NETWORK_ERROR_MESSAGE = "No se pudo contactar al servidor";
+
+/** Spanish fallback when the response carries no usable `detail`. */
+export function messageForStatus(status: number): string {
+  if (status === 0) return NETWORK_ERROR_MESSAGE;
+  if (status === 401) return "Tu sesión expiró. Vuelve a entrar.";
+  if (status === 403) return "No tienes permiso para hacer esto.";
+  if (status === 404) return "No encontramos lo que buscabas.";
+  if (status === 413) return "El archivo es demasiado grande.";
+  if (status === 429) return "Demasiados intentos. Espera un momento y vuelve a probar.";
+  if (status === 502 || status === 503 || status === 504) {
+    return "El servidor no está disponible en este momento. Inténtalo de nuevo en unos minutos.";
+  }
+  if (status >= 500) return "Algo falló en el servidor. Inténtalo de nuevo.";
+  return `No se pudo completar la acción (error ${status}).`;
+}
+
+/** The session cookie is missing or expired: the user must log in again. */
+export function isSessionExpired(error: unknown): boolean {
+  return error instanceof KnowledgeApiError && error.status === 401;
+}
+
+/** The server could not be reached or is failing (network error or 5xx). */
+export function isServerUnreachable(error: unknown): boolean {
+  return (
+    error instanceof KnowledgeApiError && (error.status === 0 || error.status >= 500)
+  );
+}
+
+/** Fetches `/api{path}`, mapping network and HTTP failures to KnowledgeApiError. */
+async function request(path: string, init?: RequestInit): Promise<Response> {
+  let response: Response;
+  try {
+    response = await fetch(`/api${path}`, {
+      ...init,
+      headers: { ...(init?.headers ?? {}) },
+    });
+  } catch {
+    throw new KnowledgeApiError(0, NETWORK_ERROR_MESSAGE);
+  }
   if (!response.ok) {
-    let detail = `Error ${response.status}`;
+    let detail = messageForStatus(response.status);
     try {
       const body = await response.json();
-      if (typeof body.detail === "string") detail = body.detail;
+      if (typeof body.detail === "string" && body.detail.trim()) detail = body.detail;
     } catch {
-      // respuesta sin JSON; el estado basta
+      // non-JSON body (proxy page, gateway error): keep the status message
     }
     throw new KnowledgeApiError(response.status, detail);
   }
+  return response;
+}
+
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await request(path, init);
   return response.json() as Promise<T>;
 }
+
+let sourcesInFlight: Promise<KnowledgeSource[]> | null = null;
 
 export const knowledgeClient = {
   me: () => api<{ authenticated: boolean }>("/auth/me"),
@@ -128,10 +170,17 @@ export const knowledgeClient = {
 
   logout: () => api<{ ok: boolean }>("/auth/logout", { method: "POST" }),
 
-  listSources: () =>
-    api<{ sources: KnowledgeSource[] }>("/knowledge/sources").then(
-      (r) => r.sources,
-    ),
+  /** Concurrent callers share the same in-flight request. */
+  listSources: () => {
+    if (!sourcesInFlight) {
+      sourcesInFlight = api<{ sources: KnowledgeSource[] }>("/knowledge/sources")
+        .then((r) => r.sources)
+        .finally(() => {
+          sourcesInFlight = null;
+        });
+    }
+    return sourcesInFlight;
+  },
 
   setActive: (id: string, active: boolean) =>
     api<{ ok: boolean; active: boolean }>(`/knowledge/sources/${id}`, {
@@ -194,6 +243,8 @@ export const knowledgeClient = {
       method: "PUT",
       headers: { "Content-Type": contentType },
       body: file,
+    }).catch(() => {
+      throw new KnowledgeApiError(0, "No se pudo subir el archivo: revisa tu conexión");
     }).then((r) => {
       if (!r.ok) {
         throw new KnowledgeApiError(r.status, `No se pudo subir el archivo (${r.status})`);
@@ -208,7 +259,8 @@ export const knowledgeClient = {
     `/knowledge/jobs/${jobId}`,
   ),
 
-  exportUrl: (format: "md" | "json") => `/api/knowledge/export?format=${format}`,
+  exportFile: (format: "md" | "json") =>
+    request(`/knowledge/export?format=${format}`).then((r) => r.blob()),
 };
 
 export function contentTypeFor(filename: string): string {

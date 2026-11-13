@@ -1,5 +1,7 @@
-import { Download, History, RotateCcw, X } from "lucide-react";
+import { Download, History, Loader2, RotateCcw, X } from "lucide-react";
+import { useId } from "react";
 import type { HistoryTarget } from "./knowledge-screen-store";
+import { useDialogA11y } from "./use-dialog-a11y";
 
 export interface HistoryDrawerProps {
   history: HistoryTarget | null;
@@ -14,17 +16,24 @@ export function HistoryDrawer({
   onRestore,
   onDownload,
 }: HistoryDrawerProps) {
+  const titleId = useId();
+  const drawerRef = useDialogA11y<HTMLElement>(history !== null, onClose);
   if (!history) return null;
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-navy-950/40 backdrop-blur-xs" onClick={onClose}>
       <aside
-        className="h-full w-full max-w-md bg-white border-l border-neutral-200 shadow-xl font-montserrat flex flex-col"
+        ref={drawerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="outline-none h-full w-full max-w-md bg-white border-l border-neutral-200 shadow-xl font-montserrat flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-center justify-between border-b border-neutral-200 px-5 py-4">
           <div className="min-w-0">
-            <h2 className="flex items-center gap-2 font-bold text-neutral-800">
+            <h2 id={titleId} className="flex items-center gap-2 font-bold text-neutral-800">
               <History className="h-4 w-4 text-navy-600" />
               Historial
             </h2>
@@ -33,6 +42,7 @@ export function HistoryDrawer({
           <button
             type="button"
             onClick={onClose}
+            aria-label="Cerrar"
             className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
           >
             <X className="h-4 w-4" />
@@ -41,7 +51,10 @@ export function HistoryDrawer({
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {history.loading ? (
-            <p className="text-sm text-neutral-400">Cargando versiones…</p>
+            <p role="status" className="flex items-center gap-2 text-sm text-neutral-400">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Cargando versiones…
+            </p>
           ) : history.versions.length === 0 ? (
             <div className="rounded-xl border border-dashed border-neutral-300 px-4 py-8 text-center">
               <p className="font-semibold text-neutral-700 text-sm">

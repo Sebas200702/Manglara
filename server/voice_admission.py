@@ -6,8 +6,9 @@ connection may start: allowed browser origin, a global cap and a per-IP cap.
 Every limit is off when its setting is empty/0, so the default behavior is
 unchanged.
 
-State lives in process memory: it is correct with the single uvicorn worker
-the backend runs today (the meeting bot also requires one worker).
+State lives in process memory, so every cap is per worker: with
+WEB_CONCURRENCY=N the instance admits up to N times VOICE_MAX_SESSIONS. Size
+the caps per worker (see process_layout.py for the worker rules).
 """
 
 import time

@@ -3,6 +3,7 @@ import base64
 import json
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -20,6 +21,7 @@ from config import (
     VOICE_MAX_NEW_SESSIONS_PER_MIN,
     VOICE_MAX_SESSION_MIN,
     VOICE_MAX_SESSIONS_PER_IP,
+    VOICE_VAD_SILENCE_MS,
 )
 from db import list_active_documents
 from gemini_client import GeminiLiveClient
@@ -31,6 +33,7 @@ from pdf.digest import build_knowledge_context
 from pdf.retrieval import retrieve_context
 from pdf.router import router as pdf_router
 from prompt import CONTEXT_NOTE, LANGUAGE_REMINDER, build_system_prompt
+from turn_metrics import TurnMetrics
 from voice_admission import BUSY_MESSAGE, ORIGIN_MESSAGE, VoiceAdmission
 from voice_watchdog import SessionWatchdog
 
@@ -117,6 +120,21 @@ def _connect_error_message(error: Exception) -> str:
     return CONNECT_FAILED_MESSAGE
 
 
+def _voice_live_config() -> dict:
+    """Live session settings of the public voice chat."""
+    # Without compression Gemini Live ends audio+video sessions after about
+    # two minutes and every reconnect pays the whole system prompt again;
+    # the sliding window keeps one session alive (same as the meeting bot).
+    config: dict = {"context_window_compression": {"sliding_window": {}}}
+    if VOICE_VAD_SILENCE_MS > 0:
+        config["realtime_input_config"] = {
+            "automatic_activity_detection": {
+                "silence_duration_ms": VOICE_VAD_SILENCE_MS,
+            }
+        }
+    return config
+
+
 async def _reject(ws: WebSocket, message: str):
     await ws.send_json({"type": "error", "message": message})
     await ws.close()
@@ -167,12 +185,9 @@ async def _voice_session(ws: WebSocket):
         knowledge = ""
 
     try:
-        # Without compression Gemini Live ends audio+video sessions after about
-        # two minutes and every reconnect pays the whole system prompt again;
-        # the sliding window keeps one session alive (same as the meeting bot).
         await gemini.connect(
             system_prompt=build_system_prompt(knowledge),
-            extra_config={"context_window_compression": {"sliding_window": {}}},
+            extra_config=_voice_live_config(),
         )
     except Exception as e:
         logger.error(f"[ws] Gemini connect failed: {e}")
@@ -197,11 +212,22 @@ async def _voice_session(ws: WebSocket):
         watchdog.touch()
         await ws.send_json({"type": "transcript", "role": role, "text": text})
 
+    # Per-turn timing: did the cartilla context reach Gemini before Manglara
+    # started answering? Records hold timings only, never transcript text.
+    metrics = TurnMetrics()
+
+    def log_turn():
+        record = metrics.finish()
+        if record:
+            logger.info("[metric] turn %s", json.dumps(record))
+
     async def on_turn_complete():
         watchdog.touch()
+        log_turn()
         await ws.send_json({"type": "turn_complete"})
 
     async def on_interrupted():
+        log_turn()
         await ws.send_json({"type": "interrupted"})
 
     rag = {"fired": False, "debounce": None}
@@ -217,14 +243,18 @@ async def _voice_session(ws: WebSocket):
         logger.info("[lang] recordatorio de idioma inyectado")
 
     async def run_retrieval(text: str):
+        turn = metrics.turn
+        started = time.monotonic()
         try:
             active = await list_active_documents()
             doc_ids = [d["id"] for d in active]
             if not doc_ids:
                 return
-            context = await retrieve_context(doc_ids, text)
+            names = {d["id"]: d["name"] for d in active if d.get("name")}
+            context = await retrieve_context(doc_ids, text, names=names)
             if context:
                 await gemini.inject_context(CONTEXT_NOTE + "\n\n" + context)
+                metrics.context_injected((time.monotonic() - started) * 1000, turn)
                 logger.info("[rag] injected %d chars of context", len(context))
         except Exception as e:
             logger.warning("[rag] retrieval failed: %s", e)
@@ -236,6 +266,7 @@ async def _voice_session(ws: WebSocket):
 
     async def on_user_partial(text: str):
         watchdog.touch()
+        metrics.speech_started()
         if not lang["sent"] and lang["turn"] % LANG_REMIND_EVERY == 0:
             lang["sent"] = True
             asyncio.create_task(remind_language())
@@ -261,11 +292,13 @@ async def _voice_session(ws: WebSocket):
         # speech (transcription arrived too late), run it now so at least the
         # follow-up turn has the context. Reset state for the next turn.
         cancel_debounce()
+        metrics.answer_started()
         fired = rag["fired"]
         rag["fired"] = False
         lang["turn"] += 1
         lang["sent"] = False
         if not fired and text.strip():
+            metrics.retrieval_late()
             asyncio.create_task(run_retrieval(text))
 
     gemini.transcript_callback = on_transcript
@@ -305,6 +338,7 @@ async def _voice_session(ws: WebSocket):
     async def gemini_to_ws():
         try:
             async for audio_chunk in gemini.receive_loop():
+                metrics.answer_started()
                 b64 = base64.b64encode(audio_chunk).decode()
                 await ws.send_json({"type": "audio", "data": b64})
         except Exception as e:
@@ -332,6 +366,7 @@ async def _voice_session(ws: WebSocket):
     except Exception as e:
         logger.error(f"[ws] Session error: {e}")
     finally:
+        logger.info("[metric] session %s", json.dumps(metrics.summary()))
         for task in tasks:
             task.cancel()
         await gemini.close()

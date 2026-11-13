@@ -266,7 +266,15 @@ sudo firewall-cmd --reload
 | `VOICE_IDLE_TIMEOUT_S` | Cierra la sesión si la persona no habla en este tiempo; la web muestra el motivo y no reconecta. 0 = nunca (default: 90) |
 | `VOICE_MAX_SESSION_MIN` | Duración máxima de una sesión de voz. 0 = sin límite (default: 0) |
 | `VOICE_PRELOAD_CHARS` | Conocimiento precargado en el system prompt de cada sesión; menos = conexión más barata, el RAG cubre el resto (default: 60000) |
+| `GEMINI_TEMPERATURE` | Temperatura del modelo Live en la voz pública. Vacío = la de la API (no se envía). Sugerido: `0.4`, se pega más a las cartillas e improvisa menos (default: vacío) |
+| `VOICE_VAD_SILENCE_MS` | Silencio (ms) tras el que Gemini da por terminado el turno de la persona en la voz pública. Más margen deja llegar el contexto del RAG antes de que Manglara responda, a cambio de latencia. Sugerido: `700`. 0 / vacío = VAD por defecto de Gemini (default: 0) |
 | `GEMINI_MEDIA_RESOLUTION` | Resolución con la que Gemini tokeniza los frames de la cámara; `MEDIA_RESOLUTION_LOW` cuesta ~4 veces menos. Vacío = la del modelo (default: `MEDIA_RESOLUTION_LOW`) |
+
+Cada turno de la voz pública deja una línea `[metric] turn {...}` en los logs
+con `context`: `before_answer` (el contexto de las cartillas llegó antes de que
+Manglara empezara a responder), `late` (llegó después: ese turno se respondió
+sin él) o `none` (no hubo contexto). Al cerrar la sesión queda un resumen
+`[metric] session {...}`. Solo tiempos, nunca texto de la conversación.
 
 Cada sesión de voz abre su propia sesión de Gemini Live: el techo real de
 usuarios simultáneos es la cuota del proyecto en Google, no el VPS. Fijar

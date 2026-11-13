@@ -1,7 +1,8 @@
 import { FileUp, Loader2, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { STAGE_LABELS } from "./use-knowledge-screen";
 import type { ActiveJob } from "./knowledge-screen-store";
+import { useDialogA11y } from "./use-dialog-a11y";
 
 export interface UploadDialogProps {
   open: boolean;
@@ -16,6 +17,9 @@ export function UploadDialog({ open, job, replaceTarget, onClose, onStart }: Upl
   const [file, setFile] = useState<File | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const busy = job !== null;
+  const finished = job?.state.status === "done" || job?.state.status === "error";
+  const titleId = useId();
+  const dialogRef = useDialogA11y<HTMLDivElement>(open || busy, onClose, !busy || finished);
 
   useEffect(() => {
     if (!busy && inputRef.current) inputRef.current.value = "";
@@ -43,11 +47,16 @@ export function UploadDialog({ open, job, replaceTarget, onClose, onStart }: Upl
       className="fixed inset-0 z-50 flex items-center justify-center bg-navy-950/45 px-4 backdrop-blur-xs"
       role="dialog"
       aria-modal="true"
+      aria-labelledby={titleId}
     >
-      <div className="w-full max-w-md bg-white rounded-2xl border border-neutral-200 shadow-xl p-6 font-montserrat">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className="w-full max-w-md bg-white rounded-2xl border border-neutral-200 shadow-xl p-6 font-montserrat outline-none"
+      >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-base font-bold text-neutral-800">
+            <h2 id={titleId} className="text-base font-bold text-neutral-800">
               {job?.mode === "replace" ? "Reemplazar cartilla" : "Nueva cartilla"}
             </h2>
             <p className="mt-1 text-xs text-neutral-500">
@@ -59,8 +68,9 @@ export function UploadDialog({ open, job, replaceTarget, onClose, onStart }: Upl
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100"
+            className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed"
             disabled={busy}
+            aria-label="Cerrar"
           >
             <X className="h-4 w-4" />
           </button>
@@ -100,7 +110,7 @@ export function UploadDialog({ open, job, replaceTarget, onClose, onStart }: Upl
               </button>
             ) : job.state.status === "error" ? (
               <div className="mt-2">
-                <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
+                <p role="alert" className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
                   {job.state.error || "Falló el procesamiento"}
                 </p>
                 <button
@@ -122,6 +132,7 @@ export function UploadDialog({ open, job, replaceTarget, onClose, onStart }: Upl
         ) : (
           <button
             type="button"
+            data-autofocus
             onClick={() => inputRef.current?.click()}
             className={`mt-6 flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-10 transition border-neutral-300 hover:border-brand-400 hover:bg-brand-50/40`}
           >

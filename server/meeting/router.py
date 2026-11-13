@@ -8,10 +8,11 @@ import logging
 import re
 import secrets
 
-from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field, field_validator
 
 from config import MEETING_BOT_NAME
+from knowledge.auth import COOKIE_NAME, require_admin, verify_session_token
 from .bridge import BRIDGES, MeetingBridge
 from .detector import UnsupportedMeetingUrl, detect_and_normalize
 from .models import MeetingSession
@@ -22,6 +23,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 # Los WS van sin prefijo: /ws/meetings/... (igual que /ws/voice).
 ws_router = APIRouter(tags=["meetings"])
+# La API pública del bot exige la sesión del panel (cookie de admin): lanzar
+# un bot abre Chromium y gasta cuota de Gemini. debug/ui (solo loopback) y el
+# WS interno (loopback + token) tienen su propia guarda.
+ADMIN = [Depends(require_admin)]
 
 # Sesiones conocidas (activas e históricas recientes) y sus tasks.
 SESSIONS: dict[str, MeetingSession] = {}
@@ -121,7 +126,7 @@ async def push_transcript(session_id: str, role: str, text: str):
             pass
 
 
-@router.post("/join", status_code=202)
+@router.post("/join", status_code=202, dependencies=ADMIN)
 async def join_meeting(req: JoinRequest):
     if _active_session():
         raise HTTPException(409, BUSY_MESSAGE)
@@ -156,7 +161,7 @@ async def join_meeting(req: JoinRequest):
     return {"id": session.id, **session.public_state()}
 
 
-@router.get("")
+@router.get("", dependencies=ADMIN)
 async def list_meetings():
     """Debug: la reunión activa (si hay) y el historial reciente."""
     active = _active_session()
@@ -167,7 +172,7 @@ async def list_meetings():
     }
 
 
-@router.get("/{session_id}")
+@router.get("/{session_id}", dependencies=ADMIN)
 async def get_meeting(session_id: str):
     return _get_or_404(session_id).public_state()
 
@@ -212,14 +217,14 @@ async def debug_meeting_ui(session_id: str, request: Request):
     return data
 
 
-@router.post("/{session_id}/leave")
+@router.post("/{session_id}/leave", dependencies=ADMIN)
 async def leave_meeting(session_id: str):
     bridge = _get_bridge_or_404(session_id)
     await bridge.leave()
     return {"ok": True}
 
 
-@router.post("/{session_id}/brain/start")
+@router.post("/{session_id}/brain/start", dependencies=ADMIN)
 async def brain_start(session_id: str):
     bridge = _get_bridge_or_404(session_id)
     try:
@@ -233,21 +238,21 @@ async def brain_start(session_id: str):
     return {"ok": True, "brain": bridge.session.brain}
 
 
-@router.post("/{session_id}/brain/stop")
+@router.post("/{session_id}/brain/stop", dependencies=ADMIN)
 async def brain_stop(session_id: str):
     bridge = _get_bridge_or_404(session_id)
     await bridge.brain_stop()
     return {"ok": True, "brain": bridge.session.brain}
 
 
-@router.post("/{session_id}/mic")
+@router.post("/{session_id}/mic", dependencies=ADMIN)
 async def set_mic(session_id: str, req: MediaToggle):
     bridge = _get_bridge_or_404(session_id)
     await bridge.set_mic(req.enabled)
     return {"ok": True, "mic_enabled": req.enabled}
 
 
-@router.post("/{session_id}/cam")
+@router.post("/{session_id}/cam", dependencies=ADMIN)
 async def set_cam(session_id: str, req: MediaToggle):
     bridge = _get_bridge_or_404(session_id)
     await bridge.set_cam(req.enabled)
@@ -257,6 +262,9 @@ async def set_cam(session_id: str, req: MediaToggle):
 @ws_router.websocket("/ws/meetings/{session_id}")
 async def ws_meeting_ui(ws: WebSocket, session_id: str):
     """Eventos hacia la UI: state + (Fase 2) transcript."""
+    if not verify_session_token(ws.cookies.get(COOKIE_NAME, "")):
+        await ws.close(code=4401)
+        return
     try:
         session = SESSIONS[session_id]
     except KeyError:

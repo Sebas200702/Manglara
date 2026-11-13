@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef } from "react";
-import { contentTypeFor, knowledgeClient } from "../../lib/knowledge-client";
+import {
+  contentTypeFor,
+  isServerUnreachable,
+  isSessionExpired,
+  knowledgeClient,
+  messageForStatus,
+} from "../../lib/knowledge-client";
 import { useKnowledgeScreenStore } from "./knowledge-screen-store";
 
 export const STAGE_LABELS: Record<string, string> = {
@@ -10,9 +16,18 @@ export const STAGE_LABELS: Record<string, string> = {
   done: "Listo",
 };
 
+const SESSION_EXPIRED_MESSAGE = messageForStatus(401);
+const UNKNOWN_ERROR_MESSAGE = "Algo salió mal. Inténtalo de nuevo.";
+
+function messageOf(e: unknown): string {
+  return e instanceof Error && e.message ? e.message : UNKNOWN_ERROR_MESSAGE;
+}
+
 export function useKnowledgeScreen() {
   const authed = useKnowledgeScreenStore((s) => s.authed);
   const checking = useKnowledgeScreenStore((s) => s.checking);
+  const unreachable = useKnowledgeScreenStore((s) => s.unreachable);
+  const loginNotice = useKnowledgeScreenStore((s) => s.loginNotice);
   const loading = useKnowledgeScreenStore((s) => s.loading);
   const sources = useKnowledgeScreenStore((s) => s.sources);
   const error = useKnowledgeScreenStore((s) => s.error);
@@ -24,9 +39,15 @@ export function useKnowledgeScreen() {
 
   const setAuthed = useKnowledgeScreenStore((s) => s.setAuthed);
   const setChecking = useKnowledgeScreenStore((s) => s.setChecking);
+  const setUnreachable = useKnowledgeScreenStore((s) => s.setUnreachable);
+  const setLoginNotice = useKnowledgeScreenStore((s) => s.setLoginNotice);
+  const setLoading = useKnowledgeScreenStore((s) => s.setLoading);
   const setSources = useKnowledgeScreenStore((s) => s.setSources);
-  const setError = useKnowledgeScreenStore((s) => s.setError);
-  const setNotice = useKnowledgeScreenStore((s) => s.setNotice);
+  const patchSource = useKnowledgeScreenStore((s) => s.patchSource);
+  const showError = useKnowledgeScreenStore((s) => s.showError);
+  const dismissError = useKnowledgeScreenStore((s) => s.dismissError);
+  const showNotice = useKnowledgeScreenStore((s) => s.showNotice);
+  const dismissNotice = useKnowledgeScreenStore((s) => s.dismissNotice);
   const setHistory = useKnowledgeScreenStore((s) => s.setHistory);
   const setPromptPreview = useKnowledgeScreenStore((s) => s.setPromptPreview);
   const setJob = useKnowledgeScreenStore((s) => s.setJob);
@@ -36,77 +57,101 @@ export function useKnowledgeScreen() {
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelled = useRef(false);
 
-  const showError = useCallback(
-    (message: string) => {
-      setError(message);
-      window.setTimeout(() => setError(null), 5000);
+  /** Back to the login with a notice; the rest of the panel state is dropped. */
+  const expireSession = useCallback(() => {
+    dismissError();
+    setSources([]);
+    setHistory(null);
+    setPromptPreview(null);
+    setLoginNotice(SESSION_EXPIRED_MESSAGE);
+    setAuthed(false);
+  }, [dismissError, setAuthed, setHistory, setLoginNotice, setPromptPreview, setSources]);
+
+  /** Single error path: 401 ends the session, anything else is a toast. */
+  const fail = useCallback(
+    (e: unknown, retry?: () => void) => {
+      if (isSessionExpired(e)) {
+        expireSession();
+        return;
+      }
+      showError({ message: messageOf(e), retry });
     },
-    [setError],
+    [expireSession, showError],
   );
 
   const loadSources = useCallback(async () => {
+    setLoading(true);
     try {
       const rows = await knowledgeClient.listSources();
       if (cancelled.current) return;
       setSources(rows);
     } catch (e) {
-      if (e instanceof Error && e.message === "Error 401") {
-        setAuthed(false);
-      } else if (e instanceof Error) {
-        showError(e.message);
-      }
+      fail(e, () => void loadSources());
+    } finally {
+      setLoading(false);
     }
-  }, [setAuthed, setSources, showError]);
+  }, [fail, setLoading, setSources]);
 
   const initialize = useCallback(async () => {
     setChecking(true);
+    setUnreachable(null);
     try {
       const { authenticated } = await knowledgeClient.me();
       setAuthed(authenticated);
       if (authenticated) await loadSources();
-    } catch {
-      setAuthed(false);
+    } catch (e) {
+      if (isServerUnreachable(e)) {
+        setUnreachable(messageOf(e));
+      } else {
+        setAuthed(false);
+      }
     } finally {
       setChecking(false);
     }
-  }, [loadSources, setAuthed, setChecking]);
+  }, [loadSources, setAuthed, setChecking, setUnreachable]);
 
   const login = useCallback(
     async (password: string) => {
       try {
         await knowledgeClient.login(password);
+        setLoginNotice(null);
         setAuthed(true);
         await loadSources();
       } catch (e) {
         throw e instanceof Error ? e : new Error("No se pudo iniciar sesión");
       }
     },
-    [loadSources, setAuthed],
+    [loadSources, setAuthed, setLoginNotice],
   );
 
   const logout = useCallback(async () => {
     try {
       await knowledgeClient.logout();
+    } catch {
+      // the local session is closed anyway
     } finally {
+      setLoginNotice(null);
       setAuthed(false);
       setSources([]);
     }
-  }, [setAuthed, setSources]);
+  }, [setAuthed, setLoginNotice, setSources]);
 
+  /** Optimistic toggle: flip locally, confirm with the server, revert on failure. */
   const setActive = useCallback(
     async (id: string, active: boolean) => {
       setBusySourceId(id);
+      patchSource(id, { active });
       try {
-        await knowledgeClient.setActive(id, active);
-        const rows = await knowledgeClient.listSources();
-        setSources(rows.filter((r) => r.status !== "archived"));
+        const result = await knowledgeClient.setActive(id, active);
+        patchSource(id, { active: result.active });
       } catch (e) {
-        if (e instanceof Error) showError(e.message);
+        patchSource(id, { active: !active });
+        fail(e, () => void setActive(id, active));
       } finally {
         setBusySourceId(null);
       }
     },
-    [setBusySourceId, setSources, showError],
+    [fail, patchSource, setBusySourceId],
   );
 
   /** Reordena localmente (drag & drop) y persiste la nueva lista. */
@@ -122,11 +167,11 @@ export function useKnowledgeScreen() {
       try {
         await knowledgeClient.reorder(next.map((r) => r.id));
       } catch (e) {
-        if (e instanceof Error) showError(e.message);
-        await loadSources();
+        fail(e);
+        if (!isSessionExpired(e)) await loadSources();
       }
     },
-    [loadSources, setSources, showError],
+    [fail, loadSources, setSources],
   );
 
   const moveSourceByStep = useCallback(
@@ -145,14 +190,15 @@ export function useKnowledgeScreen() {
       setBusySourceId(id);
       try {
         await knowledgeClient.archive(id);
-        await loadSources();
+        // mirrors the server: archived sources are also deactivated
+        patchSource(id, { status: "archived", active: false });
       } catch (e) {
-        if (e instanceof Error) showError(e.message);
+        fail(e, () => void archive(id));
       } finally {
         setBusySourceId(null);
       }
     },
-    [loadSources, setBusySourceId, showError],
+    [fail, patchSource, setBusySourceId],
   );
 
   const restore = useCallback(
@@ -160,62 +206,68 @@ export function useKnowledgeScreen() {
       setBusySourceId(id);
       try {
         await knowledgeClient.restore(id);
-        await loadSources();
+        patchSource(id, { status: "ready" });
       } catch (e) {
-        if (e instanceof Error) showError(e.message);
+        fail(e, () => void restore(id));
       } finally {
         setBusySourceId(null);
       }
     },
-    [loadSources, setBusySourceId, showError],
+    [fail, patchSource, setBusySourceId],
   );
 
-  const openHistory = useCallback(async (id: string, name: string) => {
-    setHistory({
-      documentId: id,
-      documentName: name,
-      currentVersion: 0,
-      versions: [],
-      loading: true,
-    });
-    setPromptPreview(null);
-    try {
-      const { versions, current_version } = await knowledgeClient.listVersions(id);
-    setHistory((h) =>
-      h && h.documentId === id
-        ? { ...h, versions, currentVersion: current_version, loading: false }
-        : h,
-    );
-    } catch (e) {
-      setHistory(null);
-      if (e instanceof Error) showError(e.message);
-    }
-  }, [setHistory, showError]);
+  const openHistory = useCallback(
+    async (id: string, name: string) => {
+      setHistory({
+        documentId: id,
+        documentName: name,
+        currentVersion: 0,
+        versions: [],
+        loading: true,
+      });
+      setPromptPreview(null);
+      try {
+        const { versions, current_version } = await knowledgeClient.listVersions(id);
+        setHistory((h) =>
+          h && h.documentId === id
+            ? { ...h, versions, currentVersion: current_version, loading: false }
+            : h,
+        );
+      } catch (e) {
+        setHistory(null);
+        fail(e, () => void openHistory(id, name));
+      }
+    },
+    [fail, setHistory, setPromptPreview],
+  );
 
   const doRestoreVersion = useCallback(
     async (documentId: string, version: number) => {
       try {
         await knowledgeClient.restoreVersion(documentId, version);
-        setNotice(`Se restauró el resumen de la versión ${version}`);
-        window.setTimeout(() => setNotice(null), 4000);
+        showNotice(`Se restauró el resumen de la versión ${version}`);
+        // version, digest and timestamps change server-side: refetch
         await loadSources();
         const name = useKnowledgeScreenStore.getState().history?.documentName ?? "";
         await openHistory(documentId, name);
       } catch (e) {
-        if (e instanceof Error) showError(e.message);
+        fail(e);
       }
     },
-    [loadSources, openHistory, setNotice, showError],
+    [fail, loadSources, openHistory, showNotice],
   );
 
-  const downloadSource = useCallback(async (id: string) => {
-    try {
-      const { url } = await knowledgeClient.download(id);
-      window.open(url, "_blank", "noopener");
-    } catch (e) {
-      if (e instanceof Error) showError(e.message);
-    }
-  }, [showError]);
+  const downloadSource = useCallback(
+    async (id: string) => {
+      try {
+        const { url } = await knowledgeClient.download(id);
+        window.open(url, "_blank", "noopener");
+      } catch (e) {
+        fail(e, () => void downloadSource(id));
+      }
+    },
+    [fail],
+  );
 
   const previewPrompt = useCallback(async () => {
     setPromptPreview("loading");
@@ -224,14 +276,15 @@ export function useKnowledgeScreen() {
       setPromptPreview(preview);
     } catch (e) {
       setPromptPreview(null);
-      if (e instanceof Error) showError(e.message);
+      fail(e, () => void previewPrompt());
     }
-  }, [setPromptPreview, showError]);
+  }, [fail, setPromptPreview]);
 
   /** Sube el archivo y corre el pipeline, reinvocando /run si Vercel corta
    *  por tiempo (needs_continue). Detiene la ronda al desmontar. */
   const runUpload = useCallback(
     async (file: File, mode: "new" | "replace", documentId: string | null) => {
+      let expired = false;
       try {
         const init = await knowledgeClient.initUpload({
           filename: file.name,
@@ -263,19 +316,20 @@ export function useKnowledgeScreen() {
           break;
         }
         if (last?.status === "done") {
-          setNotice(mode === "replace" ? "Cartilla actualizada" : "Cartilla lista");
-          window.setTimeout(() => setNotice(null), 4000);
+          showNotice(mode === "replace" ? "Cartilla actualizada" : "Cartilla lista");
         } else if (last?.status === "error") {
-          showError("El procesamiento falló; revisa el detalle en la lista");
+          showError({ message: "El procesamiento falló; revisa el detalle en la lista" });
         }
       } catch (e) {
-        if (e instanceof Error) showError(e.message);
+        expired = isSessionExpired(e);
+        fail(e);
         setJob(null);
       } finally {
-        await loadSources();
+        // new or replaced document: the list must come from the server
+        if (!expired) await loadSources();
       }
     },
-    [loadSources, patchJob, setJob, setNotice, showError],
+    [fail, loadSources, patchJob, setJob, showError, showNotice],
   );
 
   const closeDialog = useCallback(() => {
@@ -288,9 +342,7 @@ export function useKnowledgeScreen() {
   const exportKnowledge = useCallback(
     async (format: "md" | "json") => {
       try {
-        const response = await fetch(knowledgeClient.exportUrl(format));
-        if (!response.ok) throw new Error(`Error ${response.status}`);
-        const blob = await response.blob();
+        const blob = await knowledgeClient.exportFile(format);
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -298,10 +350,10 @@ export function useKnowledgeScreen() {
         a.click();
         URL.revokeObjectURL(url);
       } catch (e) {
-        if (e instanceof Error) showError(e.message);
+        fail(e, () => void exportKnowledge(format));
       }
     },
-    [showError],
+    [fail],
   );
 
   useEffect(() => {
@@ -315,6 +367,8 @@ export function useKnowledgeScreen() {
   return {
     authed,
     checking,
+    unreachable,
+    loginNotice,
     loading,
     sources,
     error,
@@ -339,6 +393,9 @@ export function useKnowledgeScreen() {
     runUpload,
     closeDialog,
     exportKnowledge,
+    refresh: loadSources,
+    dismissError,
+    dismissNotice,
     retry: initialize,
   };
 }

@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { contentTypeFor, knowledgeClient } from "./knowledge-client";
+import {
+  contentTypeFor,
+  isSessionExpired,
+  isServerUnreachable,
+  KnowledgeApiError,
+  knowledgeClient,
+} from "./knowledge-client";
 
 const originalFetch = globalThis.fetch;
 const calls: { url: string; init?: RequestInit }[] = [];
@@ -72,5 +78,70 @@ describe("knowledge-client", () => {
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     );
     expect(contentTypeFor("cartilla.PDF")).toBe("application/pdf");
+  });
+
+  test("un fallo de red se envuelve como KnowledgeApiError(0) en español", async () => {
+    globalThis.fetch = (() => Promise.reject(new TypeError("Failed to fetch"))) as unknown as typeof fetch;
+    let error: unknown;
+    try {
+      await knowledgeClient.me();
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(KnowledgeApiError);
+    expect((error as KnowledgeApiError).status).toBe(0);
+    expect((error as KnowledgeApiError).message).toBe("No se pudo contactar al servidor");
+    expect(isServerUnreachable(error)).toBe(true);
+  });
+
+  test("respuestas sin JSON se traducen según el estado", async () => {
+    globalThis.fetch = (() =>
+      Promise.resolve(new Response("<html>Bad Gateway</html>", { status: 502 }))) as unknown as typeof fetch;
+    let error: unknown;
+    try {
+      await knowledgeClient.listSources();
+    } catch (e) {
+      error = e;
+    }
+    expect((error as KnowledgeApiError).status).toBe(502);
+    expect((error as KnowledgeApiError).message).toStartWith("El servidor no está disponible");
+    expect(isServerUnreachable(error)).toBe(true);
+  });
+
+  test("un 401 se detecta por estado aunque el detail sea otro texto", async () => {
+    fakeFetch({ detail: "No autenticado" }, 401);
+    let error: unknown;
+    try {
+      await knowledgeClient.archive("doc1");
+    } catch (e) {
+      error = e;
+    }
+    expect(isSessionExpired(error)).toBe(true);
+    expect(isServerUnreachable(error)).toBe(false);
+    expect(isSessionExpired(new Error("Error 401"))).toBe(false);
+  });
+
+  test("exportFile usa el mismo manejo de errores", async () => {
+    fakeFetch({ detail: "No autenticado" }, 401);
+    let error: unknown;
+    try {
+      await knowledgeClient.exportFile("md");
+    } catch (e) {
+      error = e;
+    }
+    expect(isSessionExpired(error)).toBe(true);
+    expect(calls[0]?.url).toBe("/api/knowledge/export?format=md");
+  });
+
+  test("listSources reutiliza la petición en vuelo", async () => {
+    fakeFetch({ sources: [{ id: "a" }] });
+    const [first, second] = await Promise.all([
+      knowledgeClient.listSources(),
+      knowledgeClient.listSources(),
+    ]);
+    expect(calls.length).toBe(1);
+    expect(first).toBe(second);
+    await knowledgeClient.listSources();
+    expect(calls.length).toBe(2);
   });
 });

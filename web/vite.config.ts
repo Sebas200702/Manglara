@@ -18,6 +18,22 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react(), tailwindcss()],
+    build: {
+      rollupOptions: {
+        output: {
+          // Long-lived vendor chunks: app deploys don't invalidate them, and
+          // only the avatar routes download the 3D stack.
+          manualChunks(id) {
+            if (!id.includes("node_modules")) return;
+            if (id.includes("@met4citizen/talkinghead")) return "talkinghead";
+            if (/[\\/]node_modules[\\/]three[\\/]/.test(id)) return "three";
+            if (/[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/.test(id)) {
+              return "react";
+            }
+          },
+        },
+      },
+    },
     resolve: {
       // Force a single THREE instance across app code, TalkingHead, and the
       // aliased addons. Without this the production bundle evaluated three twice

@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -25,6 +26,7 @@ from gemini_client import GeminiLiveClient
 from knowledge.router import auth_router, router as knowledge_router
 from meeting.router import router as meeting_router, ws_router as meeting_ws_router
 from observability import init_error_tracking
+from process_layout import layout_error, workers_from_env
 from pdf.digest import build_knowledge_context
 from pdf.retrieval import retrieve_context
 from pdf.router import router as pdf_router
@@ -39,6 +41,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("server")
 init_error_tracking()
+
+_layout_error = layout_error(workers_from_env(os.environ), MEETINGS_ENABLED)
+if _layout_error:
+    raise RuntimeError(_layout_error)
 
 # Eager RAG: fire retrieval while the user is still speaking so the context
 # reaches Gemini before it starts answering.
@@ -79,6 +85,9 @@ app.include_router(knowledge_router)
 app.include_router(pdf_router)
 if MEETINGS_ENABLED:
     app.include_router(meeting_router)
+    # Same API under /api so the web reaches it through its own origin (Caddy
+    # proxies /api/*) and the admin cookie stays first-party.
+    app.include_router(meeting_router, prefix="/api")
     app.include_router(meeting_ws_router)
 else:
     logger.info("[startup] API de reuniones desactivada (MEETINGS_ENABLED=false)")

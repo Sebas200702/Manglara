@@ -8,11 +8,18 @@ from pdf.hybrid_rank import rank_passages
 logger = logging.getLogger(__name__)
 
 
-def assemble_context(chunks: list[dict], max_chars: int = 4000) -> str:
+def assemble_context(
+    chunks: list[dict], max_chars: int = 4000, names: dict[str, str] | None = None
+) -> str:
     parts = []
     total = 0
     for c in chunks:
-        header = f"[Página {c['page_num']}]"
+        # Naming the source lets the model attribute a fact to its cartilla
+        # instead of mixing pages from different documents. The label counts
+        # toward max_chars like the content.
+        name = (names or {}).get(c.get("document_id", ""))
+        page = f"Página {c['page_num']}"
+        header = f"[{name} — {page}]" if name else f"[{page}]"
         content = c["content"].strip()
         entry = f"{header}\n{content}"
         if total + len(entry) > max_chars:
@@ -25,7 +32,10 @@ def assemble_context(chunks: list[dict], max_chars: int = 4000) -> str:
 
 
 async def retrieve_context(
-    document_ids: str | list[str], query: str, top_k: int = 1000
+    document_ids: str | list[str],
+    query: str,
+    top_k: int = 1000,
+    names: dict[str, str] | None = None,
 ) -> str:
     # Ya no hay modelo ONNX local: el embedding es una llamada de red vía
     # `embed_texts()`, y se espera directamente en el event loop (no bloquea
@@ -42,4 +52,4 @@ async def retrieve_context(
     # ~20 ms of pure-Python scoring: run it off the event loop so it never
     # delays the audio frames of other sessions.
     ranked = await asyncio.to_thread(rank_passages, query, chunks)
-    return assemble_context(ranked)
+    return assemble_context(ranked, names=names)

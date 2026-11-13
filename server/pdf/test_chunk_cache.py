@@ -119,6 +119,33 @@ def test_cached_rows_are_not_mutated_by_ranking():
     assert again[0]["content"] == "residuos", again
 
 
+def test_reader_during_write_does_not_keep_stale_rows():
+    """A search that lands while a write is in flight must not survive it."""
+    writes = {
+        "insert_chunks": lambda: db.insert_chunks([{"document_id": "a"}]),
+        "delete_chunks_by_document": lambda: db.delete_chunks_by_document("a"),
+        "delete_document": lambda: db.delete_document("a"),
+        "update_document_fields": lambda: db.update_document_fields("a", {"active": False}),
+    }
+    for name, write in writes.items():
+        setup()
+
+        async def racing(self, *args, **kwargs):
+            # The reader runs while the HTTP write is still pending.
+            await db.search_chunks("a", [1.0, 0.0])
+            return FakeResponse()
+
+        originals = {m: getattr(FakeClient, m) for m in ("post", "patch", "delete")}
+        for m in originals:
+            setattr(FakeClient, m, racing)
+        try:
+            asyncio.run(write())
+        finally:
+            for m, fn in originals.items():
+                setattr(FakeClient, m, fn)
+        assert not db._chunk_cache, f"{name}: stale rows cached during the write"
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

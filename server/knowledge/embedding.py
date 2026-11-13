@@ -116,6 +116,7 @@ async def ingest_batch_with_embeddings(
     await db.insert_chunks(rows)
 
 
+@db._invalidates_chunk_cache
 async def reembed_document(document_id: str) -> int:
     """Re-vectoriza los chunks ya persistidos (mismo contenido, nuevo modelo).
     UPSERT en 1 request por lote con resolution=merge-duplicates, preservando

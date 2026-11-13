@@ -1,4 +1,5 @@
 import logging
+import functools
 import time
 
 import httpx
@@ -27,6 +28,21 @@ _chunk_cache: dict[str, tuple[float, list[dict]]] = {}
 def invalidate_chunk_cache() -> None:
     """Drop cached chunk rows; called by every write to documents or chunks."""
     _chunk_cache.clear()
+
+
+def _invalidates_chunk_cache(write):
+    """Clear the cache before and after the write: a search that lands while
+    the HTTP write is in flight would otherwise cache the old rows."""
+
+    @functools.wraps(write)
+    async def wrapper(*args, **kwargs):
+        invalidate_chunk_cache()
+        try:
+            return await write(*args, **kwargs)
+        finally:
+            invalidate_chunk_cache()
+
+    return wrapper
 
 
 async def insert_document(
@@ -58,8 +74,8 @@ async def insert_document(
         return resp.json()[0]
 
 
+@_invalidates_chunk_cache
 async def insert_chunks(chunks: list[dict]):
-    invalidate_chunk_cache()
     if not chunks:
         return
     async with httpx.AsyncClient() as client:
@@ -222,8 +238,8 @@ async def set_document_status(
         resp.raise_for_status()
 
 
+@_invalidates_chunk_cache
 async def delete_document(document_id: str) -> bool:
-    invalidate_chunk_cache()
     async with httpx.AsyncClient() as client:
         resp = await client.delete(
             f"{BASE}/documents",
@@ -258,10 +274,10 @@ async def list_active_documents() -> list[dict]:
         return resp.json()
 
 
+@_invalidates_chunk_cache
 async def update_document_fields(document_id: str, fields: dict) -> dict:
-    # Activate, archive, restore and rollback all pass here: drop cached
-    # chunk rows so the next question sees the new knowledge set at once.
-    invalidate_chunk_cache()
+    # Activate, archive, restore and rollback all pass here; the decorator
+    # drops cached chunk rows so the next question sees the new set at once.
     from datetime import datetime, timezone
 
     payload = {**fields, "updated_at": datetime.now(timezone.utc).isoformat()}
@@ -316,8 +332,8 @@ async def get_document_version(document_id: str, version: int) -> dict | None:
         return rows[0] if rows else None
 
 
+@_invalidates_chunk_cache
 async def delete_chunks_by_document(document_id: str) -> None:
-    invalidate_chunk_cache()
     async with httpx.AsyncClient() as client:
         resp = await client.delete(
             f"{BASE}/chunks",

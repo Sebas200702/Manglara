@@ -317,7 +317,17 @@ def test_meeting_debug_ui_rejects_forwarded_loopback():
     check(r.status_code == 404, "debug/ui still allows real local requests (unknown session -> 404)")
 
 
+def test_health_accepts_head_for_uptime_monitors():
+    client = TestClient(main.app)
+    get = client.get("/health")
+    check(get.status_code == 200 and get.json() == {"ok": True}, "GET /health still returns ok")
+    head = client.head("/health")
+    check(head.status_code == 200, "HEAD /health returns 200 (UptimeRobot default)")
+    check(head.content == b"", "HEAD /health has no body")
+
+
 if __name__ == "__main__":
+    test_health_accepts_head_for_uptime_monitors()
     test_admission_unit()
     test_ws_default_unchanged()
     test_ws_origin_rejected()

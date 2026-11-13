@@ -7,7 +7,8 @@ DATASET_PATH = os.path.join(os.path.dirname(__file__), "dataset.jsonl")
 
 CATEGORIES = ("answerable", "unanswerable", "false_premise", "credits", "off_topic")
 REQUIRED_FIELDS = ("id", "category", "question", "expected_facts", "must_not", "notes")
-LANGS = ("es", "en")
+LANGS = ("es", "en", "fr", "pt")
+SOURCE_FIELDS = ("document", "page", "quote")
 
 
 def load_dataset(path: str = DATASET_PATH) -> list[dict]:
@@ -59,6 +60,24 @@ def validate_cases(cases: list[dict]) -> list[str]:
                 for e in ents
             ):
                 errors.append(f"{label}: credits needs required_entities (alias lists)")
+        if "source" in case:
+            errors += [f"{label}: {e}" for e in _source_errors(case["source"])]
+    return errors
+
+
+def _source_errors(source) -> list[str]:
+    """Optional `source`: the cartilla passage a case was written from."""
+    if not isinstance(source, dict):
+        return ["source must be an object with document, page and quote"]
+    missing = [f for f in SOURCE_FIELDS if f not in source]
+    if missing:
+        return [f"source missing {', '.join(missing)}"]
+    errors = []
+    for field in ("document", "quote"):
+        if not isinstance(source[field], str) or not source[field].strip():
+            errors.append(f"source {field} must be a non-empty string")
+    if not isinstance(source["page"], int) or isinstance(source["page"], bool):
+        errors.append("source page must be an int")
     return errors
 
 

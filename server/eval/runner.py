@@ -2,6 +2,7 @@
 
 Usage (from `server/`):
     python -m eval.runner --dry-run --limit 3
+    python -m eval.runner --check-sources   # cited quotes vs active docs, no Gemini
     EVAL_GEMINI_API_KEY=... python -m eval.runner --out results.jsonl
 
 Each case opens one Live session (~20k tokens with the preloaded knowledge),
@@ -18,6 +19,7 @@ import os
 import sys
 import time
 
+from eval import sources
 from eval.dataset import load_dataset, select_cases, validate_cases
 from eval.keyguard import EvalKeyError, apply_eval_key, resolve_eval_key
 
@@ -42,6 +44,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--preload-chars", type=int,
                    help="override the preloaded knowledge budget for experiments")
     p.add_argument("--dry-run", action="store_true", help="print the plan; no network")
+    p.add_argument("--check-sources", action="store_true",
+                   help="only check that cited quotes still exist in the active documents "
+                        "(reads Supabase, no Gemini); exit 1 if any is stale")
     return p
 
 
@@ -154,6 +159,11 @@ def main(argv=None):
     except ValueError as e:
         print(e, file=sys.stderr)
         sys.exit(2)
+
+    if args.check_sources:
+        code, lines = asyncio.run(sources.check_active_sources(cases))
+        print("\n".join(lines))
+        sys.exit(code)
 
     if args.dry_run:
         print(plan_text(cases, args))

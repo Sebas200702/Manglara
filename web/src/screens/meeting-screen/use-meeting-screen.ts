@@ -155,8 +155,10 @@ export function useMeetingScreen() {
         store().applyState(state);
         subscribe(state.id);
       })
-      .catch(() => {
-        // Backend unreachable: leave the screen in its last known state.
+      .catch((err) => {
+        if (cancelled) return;
+        // Keep the last known state, but say why it may be stale.
+        store().setError(readableError(err, "No se pudo consultar la reunión. Revisa tu conexión."));
       });
     return () => {
       cancelled = true;

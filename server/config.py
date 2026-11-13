@@ -66,8 +66,8 @@ VOICE_PRELOAD_CHARS = int(os.getenv("VOICE_PRELOAD_CHARS", "60000"))
 GEMINI_MEDIA_RESOLUTION = os.getenv("GEMINI_MEDIA_RESOLUTION", "MEDIA_RESOLUTION_LOW")
 # Registrar transcripciones de la voz pública en los logs (datos personales).
 LOG_TRANSCRIPTS = _flag("LOG_TRANSCRIPTS", "true")
-# API del bot de reuniones (/meetings, /ws/meetings). No tiene autenticación:
-# en la instancia pública conviene apagarla si no se usa.
+# API del bot de reuniones (/meetings, /api/meetings, /ws/meetings). Exige la
+# sesión del panel (cookie de admin); apagarla si la instancia no la usa.
 MEETINGS_ENABLED = _flag("MEETINGS_ENABLED", "true")
 
 SUPABASE_URL = _require("SUPABASE_URL")

@@ -85,6 +85,9 @@ app.include_router(knowledge_router)
 app.include_router(pdf_router)
 if MEETINGS_ENABLED:
     app.include_router(meeting_router)
+    # Same API under /api so the web reaches it through its own origin (Caddy
+    # proxies /api/*) and the admin cookie stays first-party.
+    app.include_router(meeting_router, prefix="/api")
     app.include_router(meeting_ws_router)
 else:
     logger.info("[startup] API de reuniones desactivada (MEETINGS_ENABLED=false)")

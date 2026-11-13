@@ -326,7 +326,17 @@ def test_health_accepts_head_for_uptime_monitors():
     check(head.content == b"", "HEAD /health has no body")
 
 
+def test_meetings_api_requires_admin_on_both_paths():
+    client = TestClient(main.app)
+    check(client.get("/meetings").status_code == 401, "/meetings without session: 401")
+    check(client.get("/api/meetings").status_code == 401, "/api/meetings without session: 401")
+    from knowledge.auth import COOKIE_NAME, make_session_token
+    client.cookies.set(COOKIE_NAME, make_session_token())
+    check(client.get("/api/meetings").status_code == 200, "/api/meetings with session: 200")
+
+
 if __name__ == "__main__":
+    test_meetings_api_requires_admin_on_both_paths()
     test_health_accepts_head_for_uptime_monitors()
     test_admission_unit()
     test_ws_default_unchanged()

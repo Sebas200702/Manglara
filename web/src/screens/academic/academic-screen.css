@@ -1,0 +1,231 @@
+@font-face {
+  font-family: "Montserrat";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/montserrat.ttf") format("truetype");
+}
+.academic-studio {
+  --studio-green: #667d16;
+  --studio-navy: #1d436f;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  background: #f8faf6;
+  color: #193a5f;
+  font-family: var(--font-montserrat);
+}
+.academic-studio button {
+  cursor: pointer;
+}
+.academic-studio button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.academic-studio :focus-visible {
+  outline: 3px solid #1d436f;
+  outline-offset: 3px;
+}
+.academic-studio-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  flex-shrink: 0;
+}
+.academic-studio-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.academic-studio-title > svg {
+  color: var(--studio-green);
+  flex-shrink: 0;
+}
+.academic-studio-title h1 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+.academic-studio-title > span {
+  font-size: 11px;
+}
+.academic-exit {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border: 1px solid #d1d6c6;
+  border-radius: 8px;
+  font-size: 11px;
+}
+.academic-exit:hover {
+  background: #edf3d3;
+}
+.academic-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(280px, 29%, 360px);
+  flex: 1;
+  min-height: 0;
+  gap: 12px;
+  padding: 0 12px 12px;
+}
+.academic-stage {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 20px;
+  background: linear-gradient(#dde8b7, #9ebf1b33);
+  isolation: isolate;
+}
+.academic-stage::after {
+  position: absolute;
+  inset: 55% 0 0;
+  content: "";
+  background: linear-gradient(transparent, #14293f66);
+  pointer-events: none;
+  z-index: 1;
+}
+.academic-avatar {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+.academic-stage-label {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  color: white;
+  background: #16304de8;
+  border: 1px solid #ffffff26;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.academic-stage-label > span,
+.academic-session-state > span {
+  height: 6px;
+  width: 6px;
+  flex-shrink: 0;
+  border-radius: 100%;
+  background: #d1d6c6;
+}
+.academic-stage-label > .is-connected,
+.academic-session-state > .is-connected {
+  background: #9ebf1b;
+}
+.academic-avatar-loading {
+  position: absolute;
+  top: 44%;
+  left: 12%;
+  right: 12%;
+  z-index: 2;
+  text-align: center;
+  background: #ffffffed;
+  padding: 12px;
+  border-radius: 12px;
+  font-size: 13px;
+}
+.academic-manglara-cta {
+  position: absolute;
+  z-index: 3;
+  bottom: 22px;
+  right: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.academic-manglara-fab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 48px;
+  padding: 0 18px;
+  border-radius: 999px;
+  border: 1px solid #ffffffa8;
+  box-shadow: 0 10px 36px #14293f33;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.academic-manglara-fab svg {
+  flex-shrink: 0;
+}
+.academic-manglara-fab--voice {
+  background: linear-gradient(135deg, var(--studio-green) 0%, #7a9a22 100%);
+  color: #ffffff;
+}
+.academic-manglara-fab--voice:hover:enabled {
+  background: linear-gradient(135deg, #4f6018 0%, #667d16 100%);
+}
+.academic-manglara-fab--text {
+  background: #fffffff5;
+  color: var(--studio-navy);
+}
+.academic-manglara-fab--text:hover:enabled {
+  background: #f5f8e6;
+}
+.academic-alert {
+  margin: 0 12px 8px;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fff0eb;
+  color: #933f13;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+@media (max-width: 680px) {
+  .academic-studio-header {
+    padding: 7px 10px;
+    gap: 6px;
+  }
+  .academic-studio-title h1 {
+    font-size: 11px;
+  }
+  .academic-studio-title > svg {
+    display: none;
+  }
+  .academic-exit {
+    min-height: 32px;
+    font-size: 10px;
+    padding: 3px 7px;
+  }
+  .academic-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(210px, 1.1fr) minmax(220px, 1fr);
+    gap: 8px;
+    padding: 0 8px 8px;
+  }
+  .academic-stage {
+    border-radius: 14px;
+  }
+  .academic-stage-label {
+    top: 10px;
+    left: 10px;
+    font-size: 10px;
+    padding: 5px 9px;
+  }
+  .academic-manglara-cta {
+    bottom: 12px;
+    right: 10px;
+    gap: 6px;
+  }
+  .academic-manglara-fab {
+    min-height: 42px;
+    padding: 0 14px;
+    font-size: 11px;
+  }
+}

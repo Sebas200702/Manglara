@@ -1,0 +1,27 @@
+.is-lesson-panel .academic-studio-header { display: none; }
+.is-lesson-panel .academic-workspace {
+  padding: 14px;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) clamp(320px, 28vw, 390px);
+}
+.is-lesson-panel .academic-conversation { padding: 20px 18px 12px; }
+.is-lesson-panel .academic-chat-heading h2 { font-size: 21px; }
+.is-lesson-panel .academic-message { font-size: 14px; line-height: 1.75; }
+.is-lesson-panel .academic-empty p { font-size: 13px; }
+.is-lesson-panel .academic-composer { padding: 8px; }
+.is-lesson-panel .academic-composer input { font-size: 14px; }
+@media (max-width: 760px) {
+  .is-lesson-panel .academic-workspace {
+    padding: 8px;
+    gap: 8px;
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(220px, 1.2fr) minmax(220px, 1fr);
+  }
+  .is-lesson-panel .academic-conversation { padding: 12px; }
+  .is-lesson-panel .academic-chat-heading h2 { font-size: 17px; }
+  .is-lesson-panel .academic-composer input { font-size: 16px; }
+}
+@media (max-height: 620px) {
+  .is-lesson-panel .academic-empty-leaf, .is-lesson-panel .academic-prompt { display: none; }
+  .is-lesson-panel .academic-empty h3 { margin-top: 0; font-size: 19px; }
+}

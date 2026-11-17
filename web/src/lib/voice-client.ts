@@ -4,7 +4,6 @@ import type {
   TranscriptRole,
 } from "@manglara/shared";
 import { AudioPlaybackQueue } from "./audio-playback-queue.js";
-import { backendWsOrigin } from "./backend-url";
 
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
@@ -12,6 +11,8 @@ export interface VoiceClientCallbacks {
   onConnectionChange?: (state: ConnectionState) => void;
   onTranscript?: (role: TranscriptRole, text: string) => void;
   onTurnComplete?: () => void;
+  /** Revisión académica previa a mostrar texto o reproducir voz. */
+  onResponsePending?: () => void;
   /** Barge-in: everything streamed ahead of playback is stale, drop it. */
   onInterrupted?: () => void;
   onSpeakingChange?: (speaking: boolean) => void;
@@ -96,6 +97,29 @@ function frameWorkerBlobUrl(): string {
   return URL.createObjectURL(new Blob([code], { type: "application/javascript" }));
 }
 
+/**
+ * Origin of the voice backend for the WebSocket. Configurable via the Vite env
+ * var `VITE_BACKEND_URL` so a single codebase can point at any backend (local,
+ * staging, prod). Accepts:
+ *   - a `ws://` / `wss://` origin  -> used as-is
+ *   - an `http://` / `https://` origin -> mapped to `ws` / `wss`
+ *   - a bare `host[:port]`         -> scheme derived from the page (wss on https)
+ *   - omitted                      -> `localhost:8000` (local-dev default)
+ * NOTE: `VITE_*` vars are inlined at build time, so set it before `vite build`
+ * (or in the shell/`.env` before `bun run dev`).
+ */
+function backendWsOrigin(): string {
+  const configured = import.meta.env.VITE_BACKEND_URL?.trim();
+  const pageProto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  if (!configured) return `${pageProto}//localhost:8000`;
+  if (/^wss?:\/\//i.test(configured)) return configured.replace(/\/+$/, "");
+  if (/^https:\/\//i.test(configured))
+    return `wss://${configured.slice(8).replace(/\/+$/, "")}`;
+  if (/^http:\/\//i.test(configured))
+    return `ws://${configured.slice(7).replace(/\/+$/, "")}`;
+  return `${pageProto}//${configured.replace(/^\/+/, "").replace(/\/+$/, "")}`;
+}
+
 function wsUrl(path = "/ws/voice"): string {
   return `${backendWsOrigin()}${path}`;
 }
@@ -161,7 +185,7 @@ export class VoiceClient {
   /** Clears the "Reconectado" notice after a moment. */
   private reconnectedNoticeTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(callbacks: VoiceClientCallbacks = {}) {
+  constructor(callbacks: VoiceClientCallbacks = {}, private readonly endpoint?: string) {
     this.callbacks = callbacks;
   }
 
@@ -173,6 +197,15 @@ export class VoiceClient {
    */
   setAudioChunkSink(sink: ((pcm: ArrayBuffer) => void) | null): void {
     this.audioChunkSink = sink;
+  }
+
+  /** Activa únicamente altavoz para respuestas a texto, sin solicitar captura. */
+  async startPlayback(): Promise<void> {
+    if (!this.playbackCtx) {
+      this.playbackCtx = new AudioContext({ sampleRate: 24000 });
+      this.playbackQueue = new AudioPlaybackQueue(this.playbackCtx);
+    }
+    await this.playbackCtx.resume();
   }
 
   get isConnected(): boolean {
@@ -201,9 +234,15 @@ export class VoiceClient {
     this.callbacks.onConnectionChange?.("connecting");
 
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(wsUrl());
+      const ws = new WebSocket(this.endpoint ?? wsUrl());
+      this.ws = ws;
 
       ws.onopen = () => {
+        if (this.intentionalClose) {
+          ws.close();
+          reject(new Error("Connection cancelled"));
+          return;
+        }
         this.ws = ws;
         this.callbacks.onConnectionChange?.("connected");
         resolve();
@@ -305,6 +344,9 @@ export class VoiceClient {
       case "turn_complete":
         this.callbacks.onTurnComplete?.();
         break;
+      case "response_pending":
+        this.callbacks.onResponsePending?.();
+        break;
       case "interrupted":
         // Drop the audio we were sent ahead of playback - Gemini abandoned it.
         this.playbackQueue?.stop();
@@ -319,7 +361,26 @@ export class VoiceClient {
     }
   }
 
-  async startMic(): Promise<void> {
+  /**
+   * Ask Manglara something as TEXT, so she answers out loud with no microphone.
+   *
+   * Diagnostic aid for lip-sync: it produces a complete real turn (real voice at
+   * its real tempo, real streamed transcript, real playback clock), which is what
+   * makes the mouth-vs-audio timing reproducible to measure. Exposed on the
+   * window as `__ask` while a call is up.
+   */
+  sendText(text: string): boolean {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+    this.ws.send(JSON.stringify({ type: "text", data: text }));
+    return true;
+  }
+
+  /** Mantiene viva sesión académica sin transmitir audio ni identidad. */
+  sendHeartbeat(): void {
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: "ping" }));
+  }
+
+  async startMic({ camera = true }: { camera?: boolean } = {}): Promise<void> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("Not connected");
     }
@@ -347,11 +408,11 @@ export class VoiceClient {
         echoCancellation: true,
         noiseSuppression: true,
       },
-      video: {
+      video: camera ? {
         width: { ideal: 1280 },
         height: { ideal: 720 },
         facingMode: "user",
-      },
+      } : false,
     });
     console.log("[voice] getUserMedia OK, audio track:", !!stream.getAudioTracks()[0]);
 
@@ -380,7 +441,7 @@ export class VoiceClient {
       this.ws.send(JSON.stringify(payload));
     };
 
-    this.startVideo(stream);
+    if (camera) this.startVideo(stream);
     console.log("[voice] mic started, sending audio chunks to server");
   }
 

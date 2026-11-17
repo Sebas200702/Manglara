@@ -1,0 +1,214 @@
+.academic-conversation {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  padding: 18px 16px 8px;
+  border: 1px solid #e5e9dd;
+  border-radius: 18px;
+  background: white;
+}
+.academic-chat-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+.academic-chat-heading > svg {
+  color: #667d16;
+}
+.academic-eyebrow {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #667d16;
+}
+.academic-chat-heading h2 {
+  font-size: 19px;
+  font-weight: 700;
+  margin: 3px 0 0;
+}
+.academic-session-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  margin: 8px 0 0;
+  border-bottom: 1px solid #edf0e6;
+  font-size: 11px;
+  color: #545a4d;
+}
+.academic-messages {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 16px 0;
+  scrollbar-width: thin;
+}
+.academic-empty {
+  padding: clamp(12px, 5vh, 64px) 3px 12px;
+}
+.academic-empty-leaf {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 16px 16px 16px 3px;
+  background: #edf3d3;
+  color: #667d16;
+}
+.academic-empty h3 {
+  font-size: 23px;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.3;
+  margin: 18px 0 12px;
+}
+.academic-empty p {
+  font-size: 12px;
+  line-height: 1.8;
+  color: #545a4d;
+}
+.academic-empty .academic-prompt {
+  margin-top: 24px;
+  padding: 14px;
+  border-left: 2px solid #ccd63c;
+  background: #f7f9ec;
+  color: #425017;
+  border-radius: 0 10px 10px 0;
+}
+.academic-message {
+  margin: 0 0 14px;
+  padding: 12px;
+  border-radius: 12px 12px 12px 2px;
+  background: #f1f4ec;
+  font-size: 12px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.academic-message strong {
+  display: block;
+  color: #4f6018;
+  font-size: 10px;
+  margin-bottom: 4px;
+}
+.academic-message p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.academic-message-user {
+  background: #eef3f8;
+  border-radius: 12px 12px 2px 12px;
+  margin-left: 20px;
+}
+.academic-message-user strong {
+  color: #1d436f;
+}
+.academic-composer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #d1d6c6;
+  background: #f8faf6;
+  border-radius: 14px;
+  padding: 6px;
+  flex-shrink: 0;
+}
+.academic-composer:focus-within {
+  border-color: #667d16;
+}
+.academic-composer input {
+  min-width: 0;
+  width: 100%;
+  height: 32px;
+  padding: 0 6px;
+  font-size: 12px;
+  background: transparent;
+  outline: none;
+}
+.academic-composer input:focus-visible {
+  outline: none;
+}
+.academic-composer button {
+  display: grid;
+  place-items: center;
+  height: 36px;
+  width: 36px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: #667d16;
+  color: white;
+}
+.academic-help {
+  font-size: 10px;
+  color: #545a4d;
+  padding: 8px 3px 0;
+}
+.academic-help summary {
+  cursor: pointer;
+}
+.academic-help p {
+  margin: 7px 0;
+  line-height: 1.5;
+}
+@media (max-height: 620px) {
+  .academic-empty {
+    padding: 8px 0;
+  }
+  .academic-empty-leaf,
+  .academic-empty .academic-prompt {
+    display: none;
+  }
+  .academic-empty h3 {
+    font-size: 18px;
+    margin: 0 0 6px;
+  }
+  .academic-empty h3 br {
+    display: none;
+  }
+  .academic-empty p {
+    font-size: 11px;
+    line-height: 1.6;
+  }
+}
+@media (max-width: 680px) {
+  .academic-conversation {
+    padding: 10px 12px 6px;
+    border-radius: 14px;
+  }
+  .academic-chat-heading h2 {
+    font-size: 15px;
+  }
+  .academic-eyebrow {
+    display: none;
+  }
+  .academic-session-state {
+    margin-top: 3px;
+    min-height: 25px;
+  }
+  .academic-empty {
+    padding: 10px 0;
+  }
+  .academic-empty-leaf,
+  .academic-prompt {
+    display: none;
+  }
+  .academic-empty h3 {
+    font-size: 17px;
+    margin: 0 0 5px;
+  }
+  .academic-empty h3 br {
+    display: none;
+  }
+  .academic-empty p {
+    font-size: 11px;
+  }
+  .academic-messages {
+    padding: 8px 0;
+  }
+  .academic-composer input {
+    font-size: 16px;
+  }
+}

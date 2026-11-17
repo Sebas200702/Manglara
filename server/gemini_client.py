@@ -5,17 +5,22 @@ from typing import AsyncIterator, Callable, Any
 from google import genai
 from google.genai import types
 
-from config import GEMINI_API_KEY, GEMINI_LIVE_MODEL, GEMINI_VOICE_NAME
 from prompt import SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
 
 class GeminiLiveClient:
-    def __init__(self):
+    def __init__(self, *, api_key: str | None = None, model: str | None = None, voice: str | None = None):
+        # Evento conserva configuración existente; academia inyecta solo credenciales IA.
+        if api_key is None:
+            from config import GEMINI_API_KEY, GEMINI_LIVE_MODEL, GEMINI_VOICE_NAME
+            api_key, model, voice = GEMINI_API_KEY, GEMINI_LIVE_MODEL, GEMINI_VOICE_NAME
+        self.model = model or "models/gemini-3.1-flash-live-preview"
+        self.voice = voice or "Zephyr"
         self.client = genai.Client(
             http_options={"api_version": "v1beta"},
-            api_key=GEMINI_API_KEY,
+            api_key=api_key,
         )
         self._ctx = None
         self.session = None
@@ -26,16 +31,8 @@ class GeminiLiveClient:
         self.on_user_partial_transcript: Callable[[str], Any] | None = None
         self._user_text_buffer = ""
         self._receiving_output = False
-        # Off for meetings: third parties speak there, so their words (and
-        # Manglara's answers) stay out of the server logs.
-        self.log_transcripts = True
-        # Latest session-resumption handle (only sent when the config asks for
-        # `session_resumption`): reconnecting with it keeps the conversation.
-        self.resumption_handle: str | None = None
 
-    async def connect(
-        self, system_prompt: str | None = None, extra_config: dict | None = None
-    ):
+    async def connect(self, system_prompt: str | None = None):
         config = {
             "response_modalities": ["AUDIO"],
             "input_audio_transcription": {},
@@ -43,18 +40,17 @@ class GeminiLiveClient:
             "speech_config": {
                 "voice_config": {
                     "prebuilt_voice_config": {
-                        "voice_name": GEMINI_VOICE_NAME,
+                        "voice_name": self.voice,
                     }
                 }
             },
             "system_instruction": {
                 "parts": [{"text": system_prompt or SYSTEM_PROMPT}]
             },
-            **(extra_config or {}),
         }
 
         self._ctx = self.client.aio.live.connect(
-            model=GEMINI_LIVE_MODEL, config=config
+            model=self.model, config=config
         )
         self.session = await self._ctx.__aenter__()
         logger.info("[gemini] session opened")
@@ -75,6 +71,23 @@ class GeminiLiveClient:
             audio=types.Blob(data=pcm, mime_type="audio/pcm;rate=16000")
         )
 
+    async def send_text_turn(self, text: str):
+        """Send a user turn as TEXT and close it, so Gemini answers out loud.
+
+        Development/diagnostic aid: it drives a complete, real spoken turn (real
+        voice at its real tempo, real streamed transcript) with no microphone,
+        which is what makes lip-sync timing reproducible to measure. Not used by
+        the normal call flow, where turns come from send_audio_pcm16_16k.
+        """
+        if not self.session:
+            logger.warning("[gemini] no session, dropping text turn")
+            return
+        logger.info("[gemini] text turn: %r", text)
+        await self.session.send_client_content(
+            turns=types.Content(role="user", parts=[types.Part(text=text)]),
+            turn_complete=True,
+        )
+
     async def send_image_jpeg(self, image_data: bytes):
         if not self.session:
             return
@@ -92,15 +105,6 @@ class GeminiLiveClient:
             turn_complete=False,
         )
 
-    async def send_text(self, text: str):
-        """Complete user turn from text: the model answers it right away."""
-        if not self.session:
-            return
-        await self.session.send_client_content(
-            turns=types.Content(role="user", parts=[types.Part(text=text)]),
-            turn_complete=True,
-        )
-
     async def receive_loop(self) -> AsyncIterator[bytes]:
         while True:
             async for response in self.session.receive():
@@ -110,15 +114,11 @@ class GeminiLiveClient:
                     "yes" if response.setup_complete else "no",
                 )
 
-                upd = getattr(response, "session_resumption_update", None)
-                if upd and getattr(upd, "resumable", False) and upd.new_handle:
-                    self.resumption_handle = upd.new_handle
-
-                go_away = getattr(response, "go_away", None)
-                if go_away:
-                    logger.info("[gemini] go_away (time_left=%s)", go_away.time_left)
-
                 sc = response.server_content
+
+                if data := response.data:
+                    logger.debug("[gemini] yielding %d bytes of audio", len(data))
+                    yield data
 
                 if sc:
                     # Partial (interim) transcription — user is still speaking
@@ -140,8 +140,7 @@ class GeminiLiveClient:
                             await self.on_user_partial_transcript(
                                 self._user_text_buffer
                             )
-                        if self.log_transcripts:
-                            logger.info("[gemini] user transcript: %s", final.text[:100])
+                        logger.info("[gemini] user transcript: %s", final.text[:100])
 
                     # Model transcription (what Gemini is saying)
                     if getattr(sc, "output_transcription", None):
@@ -155,8 +154,7 @@ class GeminiLiveClient:
                         if text:
                             if self.transcript_callback:
                                 await self.transcript_callback("model", text)
-                            if self.log_transcripts:
-                                logger.info("[gemini] model transcript: %s", text[:100])
+                            logger.info("[gemini] model transcript: %s", text[:100])
 
                     # Barge-in: the user spoke over Manglara, so Gemini abandoned
                     # the rest of this turn. Everything already sent downstream is
@@ -181,7 +179,3 @@ class GeminiLiveClient:
                         self._user_text_buffer = ""
                         if self.turn_complete_callback:
                             await self.turn_complete_callback()
-
-                if data := response.data:
-                    logger.debug("[gemini] yielding %d bytes of audio", len(data))
-                    yield data

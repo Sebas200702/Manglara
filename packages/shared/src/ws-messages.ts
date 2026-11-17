@@ -8,6 +8,8 @@ export type ServerToClientMessage =
   | { type: "audio"; data: string }
   | { type: "transcript"; role: TranscriptRole; text: string }
   | { type: "turn_complete" }
+  /** Academia retiene salida hasta completar revisión; no contiene borrador. */
+  | { type: "response_pending" }
   /** Barge-in: the user spoke over the model, so Gemini abandoned the rest of
    *  the turn. Any audio already sent ahead of playback is stale. */
   | { type: "interrupted" }

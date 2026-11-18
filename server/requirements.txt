@@ -6,7 +6,8 @@ fastapi==0.162.2
 uvicorn[standard]==0.54.0
 python-dotenv==1.2.4
 google-genai==3.0.0
-PyMuPDF==2.1
+# pypdf (BSD-3-Clause) reemplaza a PyMuPDF (AGPL) para extraer texto de PDF.
+pypdf==7.0.1
 
 httpx==0.28.1
 python-multipart==0.0.33

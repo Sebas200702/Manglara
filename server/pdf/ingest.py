@@ -3,8 +3,8 @@ import logging
 import tempfile
 from pathlib import Path
 
-import fitz
 from docx import Document as DocxDocument
+from pypdf import PdfReader
 
 from db import insert_document, insert_chunks, update_document_digest
 from knowledge.embedding import EMBED_BATCH, embed_texts
@@ -17,13 +17,12 @@ ALLOWED_EXTENSIONS = {".pdf", ".docx"}
 
 
 def extract_text_pdf(path: str) -> list[dict]:
-    doc = fitz.open(path)
+    reader = PdfReader(path)
     pages = []
-    for page_num, page in enumerate(doc, start=1):
-        text = page.get_text()
+    for page_num, page in enumerate(reader.pages, start=1):
+        text = page.extract_text() or ""
         if text.strip():
             pages.append({"page_num": page_num, "text": text})
-    doc.close()
     return pages
 
 

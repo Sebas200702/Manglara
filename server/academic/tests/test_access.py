@@ -71,6 +71,7 @@ class AcademicAccessTest(unittest.TestCase):
             response = self.client.get("/academic/api/context?view=" + view_key(other), headers={"cookie": COOKIE_HEADER})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["lessonCode"], "HV-M5-L1")
+        self.assertEqual(response.json()["lessonTitle"], "HV-M5-L1")
         self.assertNotIn("subject", response.json())
 
     def test_socket_requires_origin_and_cookie_before_model(self):

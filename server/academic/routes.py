@@ -39,4 +39,5 @@ async def context(request: Request):
         require_view(academic, request.query_params.get("view"))
     except Exception:
         raise HTTPException(401, "ACADEMIC_SESSION_EXPIRED") from None
-    return {"lessonCode": academic["lessonCode"], "mode": academic["mode"], "sourceVersion": academic["sourceVersion"], "parentOrigin": os.environ["ACADEMIC_PARENT_ORIGIN"], "viewKey": view_key(academic)}
+    title = academic["source"]["title"] if academic.get("source") else academic["lessonCode"]
+    return {"lessonCode": academic["lessonCode"], "lessonTitle": title, "mode": academic["mode"], "sourceVersion": academic["sourceVersion"], "parentOrigin": os.environ["ACADEMIC_PARENT_ORIGIN"], "viewKey": view_key(academic)}

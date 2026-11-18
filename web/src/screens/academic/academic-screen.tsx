@@ -13,11 +13,11 @@ export const AcademicScreen = () => {
   const input = useRef<HTMLInputElement | null>(null);
   return (
     <main className={`academic-studio${tutor.panelLayout ? " is-lesson-panel" : ""}`}>
-      {tutor.panelLayout && <h1 className="sr-only">Manglara · {tutor.academic?.lessonCode}</h1>}
+      {tutor.panelLayout && <h1 className="sr-only">Manglara · {tutor.academic?.lessonTitle}</h1>}
       <header hidden={tutor.panelLayout} className="academic-studio-header">
         <div className="academic-studio-title">
           <Leaf size={20} aria-hidden="true" />
-          <h1>Manglara · {tutor.academic?.lessonCode ?? "Validando acceso"}</h1>
+          <h1>Manglara · {tutor.academic?.lessonTitle ?? "Validando acceso"}</h1>
           {tutor.academic?.mode === "instructor" && (
             <span>Modo de prueba docente.</span>
           )}

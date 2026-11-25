@@ -65,17 +65,53 @@ class GeminiLiveClient:
         # Latest session-resumption handle (only sent when the config asks for
         # `session_resumption`): reconnecting with it keeps the conversation.
         self.resumption_handle: str | None = None
+        # Set when Gemini announced the end of this connection (Live session
+        # duration limit). receive_loop then returns so the caller can
+        # reconnect before Gemini aborts the socket with 1008.
+        self.go_away_received = False
 
     async def connect(
         self, system_prompt: str | None = None, extra_config: dict | None = None
     ):
         config = live_config(system_prompt, extra_config)
 
-        self._ctx = self.client.aio.live.connect(
+        ctx = self.client.aio.live.connect(
             model=GEMINI_LIVE_MODEL, config=config
         )
-        self.session = await self._ctx.__aenter__()
+        self.session = await ctx.__aenter__()
+        self._ctx = ctx
+        self.go_away_received = False
+        self._user_text_buffer = ""
+        self._receiving_output = False
         logger.info("[gemini] session opened")
+
+    async def reconnect(
+        self, system_prompt: str | None = None, extra_config: dict | None = None
+    ):
+        """Replace the connection after go_away. The latest resumption handle
+        keeps the conversation; a rejected or missing handle opens a fresh
+        session. `extra_config` must ask for `session_resumption`."""
+        handle = self.resumption_handle
+        try:
+            await self.close()
+        except Exception as e:
+            # Gemini may have dropped the old socket already.
+            logger.debug("[gemini] close before reconnect: %s", e)
+            self._ctx = None
+            self.session = None
+        config = dict(extra_config or {})
+        if handle:
+            try:
+                await self.connect(
+                    system_prompt,
+                    {**config, "session_resumption": {"handle": handle}},
+                )
+                logger.info("[gemini] session resumed")
+                return
+            except Exception as e:
+                logger.warning("[gemini] resumption failed, fresh session: %s", e)
+        self.resumption_handle = None
+        await self.connect(system_prompt, {**config, "session_resumption": {}})
 
     async def close(self):
         if self._ctx:
@@ -135,6 +171,8 @@ class GeminiLiveClient:
                 go_away = getattr(response, "go_away", None)
                 if go_away:
                     logger.info("[gemini] go_away (time_left=%s)", go_away.time_left)
+                    self.go_away_received = True
+                    return
 
                 sc = response.server_content
 

@@ -125,7 +125,12 @@ def _voice_live_config() -> dict:
     # Without compression Gemini Live ends audio+video sessions after about
     # two minutes and every reconnect pays the whole system prompt again;
     # the sliding window keeps one session alive (same as the meeting bot).
-    config: dict = {"context_window_compression": {"sliding_window": {}}}
+    # Resumption handles let the session survive Gemini's per-connection
+    # duration limit: on go_away it reconnects and keeps the conversation.
+    config: dict = {
+        "context_window_compression": {"sliding_window": {}},
+        "session_resumption": {},
+    }
     if VOICE_VAD_SILENCE_MS > 0:
         config["realtime_input_config"] = {
             "automatic_activity_detection": {
@@ -184,9 +189,10 @@ async def _voice_session(ws: WebSocket):
         logger.warning(f"[ws] knowledge preload failed: {e}")
         knowledge = ""
 
+    system_prompt = build_system_prompt(knowledge)
     try:
         await gemini.connect(
-            system_prompt=build_system_prompt(knowledge),
+            system_prompt=system_prompt,
             extra_config=_voice_live_config(),
         )
     except Exception as e:
@@ -322,14 +328,21 @@ async def _voice_session(ws: WebSocket):
                 if not data:
                     continue
 
-                if msg_type == "audio":
-                    pcm = base64.b64decode(data)
-                    logger.debug("[ws] audio chunk received (%d bytes)", len(pcm))
-                    await gemini.send_audio_pcm16_16k(pcm)
-                elif msg_type == "video":
-                    image_bytes = base64.b64decode(data)
-                    await gemini.send_image_jpeg(image_bytes)
-                    logger.debug(f"[ws] Video frame sent ({len(image_bytes)} bytes)")
+                try:
+                    if msg_type == "audio":
+                        pcm = base64.b64decode(data)
+                        logger.debug("[ws] audio chunk received (%d bytes)", len(pcm))
+                        await gemini.send_audio_pcm16_16k(pcm)
+                    elif msg_type == "video":
+                        image_bytes = base64.b64decode(data)
+                        await gemini.send_image_jpeg(image_bytes)
+                        logger.debug(f"[ws] Video frame sent ({len(image_bytes)} bytes)")
+                except Exception as e:
+                    if not gemini.go_away_received:
+                        raise
+                    # The old connection is closing for a go_away reconnect:
+                    # drop this chunk, the next one goes to the new session.
+                    logger.debug("[ws] input dropped during reconnect: %s", e)
         except WebSocketDisconnect:
             logger.info("[ws] Client disconnected")
         except Exception as e:
@@ -337,10 +350,28 @@ async def _voice_session(ws: WebSocket):
 
     async def gemini_to_ws():
         try:
-            async for audio_chunk in gemini.receive_loop():
-                metrics.answer_started()
-                b64 = base64.b64encode(audio_chunk).decode()
-                await ws.send_json({"type": "audio", "data": b64})
+            while True:
+                async for audio_chunk in gemini.receive_loop():
+                    metrics.answer_started()
+                    b64 = base64.b64encode(audio_chunk).decode()
+                    await ws.send_json({"type": "audio", "data": b64})
+                if not gemini.go_away_received:
+                    return
+                # Gemini ends each Live connection after a fixed duration and
+                # aborts it (1008) unless the client closes first: reconnect
+                # now with the resumption handle so the visitor keeps talking.
+                logger.info("[ws] go_away: reconnecting Gemini session")
+                try:
+                    await gemini.reconnect(
+                        system_prompt=system_prompt,
+                        extra_config=_voice_live_config(),
+                    )
+                except Exception as e:
+                    logger.error(f"[ws] Gemini reconnect failed: {e}")
+                    await ws.send_json(
+                        {"type": "error", "message": _connect_error_message(e)}
+                    )
+                    return
         except Exception as e:
             logger.error(f"[gemini] Error in gemini_to_ws: {e}")
 

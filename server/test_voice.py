@@ -30,6 +30,7 @@ class FakeGemini:
     """Never sends audio: receive_loop blocks like a real idle Live session."""
 
     instances: list["FakeGemini"] = []
+    go_away_received = False
 
     def __init__(self):
         self.closed = False
@@ -382,6 +383,141 @@ def test_model_speech_counts_as_activity():
     check(sock.sent[-1].get("type") == "session_ended", "idle timeout still ends the session after the answer")
 
 
+class GoAwayGemini(FakeGemini):
+    """Session hits the Live duration limit once: go_away, then resumes."""
+
+    def __init__(self):
+        super().__init__()
+        self.reconnects: list[dict] = []
+
+    async def reconnect(self, system_prompt=None, extra_config=None):
+        self.reconnects.append(extra_config)
+        self.go_away_received = False
+
+    async def receive_loop(self):
+        if not self.reconnects:
+            yield b"before"
+            self.go_away_received = True
+            return
+        yield b"after"
+        await asyncio.Event().wait()
+
+
+class FailingReconnectGemini(GoAwayGemini):
+    async def reconnect(self, system_prompt=None, extra_config=None):
+        raise RuntimeError("quota exhausted")
+
+
+def test_go_away_reconnects_without_ending_session():
+    FakeGemini.instances.clear()
+    _use(VoiceAdmission())
+    main.GeminiLiveClient = GoAwayGemini
+    sock = LingeringSocket()
+    try:
+        asyncio.run(asyncio.wait_for(main.ws_voice(sock), timeout=2))
+    finally:
+        main.GeminiLiveClient = FakeGemini
+    gemini = FakeGemini.instances[0]
+    check(gemini.extra_config.get("session_resumption") == {},
+          "voice session asks Gemini for resumption handles")
+    check(len(gemini.reconnects) == 1, "go_away reopens the Gemini session once")
+    audio = [m["data"] for m in sock.sent if m.get("type") == "audio"]
+    check(len(audio) == 2, "audio keeps flowing after the go_away reconnect")
+    check(not any(m.get("type") == "error" for m in sock.sent), "browser sees no error on go_away")
+
+
+def test_failed_go_away_reconnect_tells_browser():
+    FakeGemini.instances.clear()
+    _use(VoiceAdmission())
+    main.GeminiLiveClient = FailingReconnectGemini
+    sock = LingeringSocket()
+    try:
+        asyncio.run(asyncio.wait_for(main.ws_voice(sock), timeout=2))
+    finally:
+        main.GeminiLiveClient = FakeGemini
+    errors = [m for m in sock.sent if m.get("type") == "error"]
+    check(len(errors) == 1 and errors[0]["message"] == main.BUSY_MESSAGE,
+          "failed reconnect sends one user-facing error")
+    check(FakeGemini.instances[0].closed and main.voice_admission.active == 0,
+          "failed reconnect closes gemini and frees the slot")
+
+
+class AbortingSendGemini(GoAwayGemini):
+    """Old connection rejects input after go_away (Gemini's 1008 abort) and
+    the reconnect handshake takes a moment, like the real Live API."""
+
+    def __init__(self):
+        super().__init__()
+        self.sent_after_reconnect = 0
+        self.dropped = 0
+
+    async def reconnect(self, system_prompt=None, extra_config=None):
+        await asyncio.sleep(0.1)
+        await super().reconnect(system_prompt, extra_config)
+
+    async def send_audio_pcm16_16k(self, pcm):
+        if self.go_away_received:
+            self.dropped += 1
+            raise RuntimeError(
+                "received 1008 (policy violation) Connection aborted because the "
+                "client failed to close the connection after receiving a GoAway"
+            )
+        if self.reconnects:
+            self.sent_after_reconnect += 1
+
+
+class BrokenSendGemini(FakeGemini):
+    """Send fails with no go_away: a real error, not a reconnect."""
+
+    attempts = 0
+
+    async def send_audio_pcm16_16k(self, pcm):
+        BrokenSendGemini.attempts += 1
+        raise RuntimeError("socket broken")
+
+
+class TalkingSocket(FakeSocket):
+    """Browser microphone: one audio chunk every 30 ms for 0.4 s."""
+
+    async def iter_text(self):
+        for _ in range(13):
+            await asyncio.sleep(0.03)
+            yield '{"type": "audio", "data": "AAAA"}'
+        await asyncio.sleep(0.1)
+
+
+def test_input_during_go_away_reconnect_does_not_end_session():
+    FakeGemini.instances.clear()
+    _use(VoiceAdmission())
+    main.GeminiLiveClient = AbortingSendGemini
+    sock = TalkingSocket()
+    try:
+        asyncio.run(asyncio.wait_for(main.ws_voice(sock), timeout=2))
+    finally:
+        main.GeminiLiveClient = FakeGemini
+    gemini = FakeGemini.instances[0]
+    check(gemini.dropped >= 1, "browser audio hit the aborted connection during reconnect")
+    check(gemini.sent_after_reconnect >= 1, "browser audio reaches the new session after reconnect")
+    audio = [m for m in sock.sent if m.get("type") == "audio"]
+    check(len(audio) == 2, "model audio keeps flowing after a send failed mid-reconnect")
+    check(not any(m.get("type") in ("error", "session_ended") for m in sock.sent),
+          "browser sees no error when a send fails mid-reconnect")
+
+
+def test_send_failure_without_go_away_still_ends_session():
+    FakeGemini.instances.clear()
+    BrokenSendGemini.attempts = 0
+    _use(VoiceAdmission())
+    main.GeminiLiveClient = BrokenSendGemini
+    try:
+        asyncio.run(asyncio.wait_for(main.ws_voice(TalkingSocket()), timeout=2))
+    finally:
+        main.GeminiLiveClient = FakeGemini
+    check(BrokenSendGemini.attempts == 1, "a real send error still stops the relay at the first chunk")
+    check(FakeGemini.instances[0].closed and main.voice_admission.active == 0,
+          "a real send error closes gemini and frees the slot")
+
+
 def test_meeting_debug_ui_rejects_forwarded_loopback():
     from fastapi import FastAPI
 
@@ -431,5 +567,9 @@ if __name__ == "__main__":
     test_turn_metric_logged_without_transcript()
     test_browser_leaving_before_ready_closes_gemini()
     test_model_speech_counts_as_activity()
+    test_go_away_reconnects_without_ending_session()
+    test_failed_go_away_reconnect_tells_browser()
+    test_input_during_go_away_reconnect_does_not_end_session()
+    test_send_failure_without_go_away_still_ends_session()
     test_meeting_debug_ui_rejects_forwarded_loopback()
     print(f"{_passed} checks OK")
